@@ -10,17 +10,49 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.webkit.UserAgentMetadata
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
 
     companion object {
-        private const val BDE_URL = "https://bdengine.app/"
+        private const val BDE_URL = "https://block-display.com/editor"
         private const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/140.0.0.0 Safari/537.36"
+
+        private val DESKTOP_IDENTITY_SCRIPT = """
+            (() => {
+                try {
+                    Object.defineProperty(navigator, 'platform', {
+                        configurable: true,
+                        get: () => 'Win32'
+                    });
+
+                    if (navigator.userAgentData) {
+                        const original = navigator.userAgentData;
+                        const desktopUAData = new Proxy(original, {
+                            get(target, prop) {
+                                if (prop === 'mobile') return false;
+                                if (prop === 'platform') return 'Windows';
+                                const value = Reflect.get(target, prop, target);
+                                return typeof value === 'function' ? value.bind(target) : value;
+                            }
+                        });
+
+                        Object.defineProperty(navigator, 'userAgentData', {
+                            configurable: true,
+                            get: () => desktopUAData
+                        });
+                    }
+                } catch (_) {}
+            })();
+        """.trimIndent()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -53,6 +85,8 @@ class MainActivity : AppCompatActivity() {
             setSupportMultipleWindows(false)
         }
 
+        configureDesktopIdentity()
+
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
@@ -76,6 +110,26 @@ class MainActivity : AppCompatActivity() {
             webView.loadUrl(BDE_URL)
         } else {
             webView.restoreState(savedInstanceState)
+        }
+    }
+
+    private fun configureDesktopIdentity() {
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
+            val metadata = UserAgentMetadata.Builder()
+                .setMobile(false)
+                .setPlatform("Windows")
+                .setPlatformVersion("10.0.0")
+                .build()
+
+            WebSettingsCompat.setUserAgentMetadata(webView.settings, metadata)
+        }
+
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                DESKTOP_IDENTITY_SCRIPT,
+                setOf("https://block-display.com")
+            )
         }
     }
 
