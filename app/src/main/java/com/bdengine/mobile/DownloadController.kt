@@ -456,7 +456,6 @@ class DownloadController(
 
             val banner = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
-                elevation = dp(24).toFloat()
                 background = roundedBackground(
                     fillColor = Color.BLACK,
                     radius = 0f,
@@ -501,11 +500,65 @@ class DownloadController(
 
             val availableWidth = (rootLayout.width - dp(28)).coerceAtLeast(dp(280))
             val bannerWidth = minOf(dp(430), availableWidth)
+            val glowWidth = dp(24)
 
-            rootLayout.addView(
+            val leftGlow = View(activity).apply {
+                background = GradientDrawable(
+                    GradientDrawable.Orientation.LEFT_RIGHT,
+                    intArrayOf(
+                        Color.TRANSPARENT,
+                        Color.argb(55, 0, 0, 0),
+                        Color.argb(180, 0, 0, 0)
+                    )
+                )
+            }
+
+            val rightGlow = View(activity).apply {
+                background = GradientDrawable(
+                    GradientDrawable.Orientation.LEFT_RIGHT,
+                    intArrayOf(
+                        Color.argb(180, 0, 0, 0),
+                        Color.argb(55, 0, 0, 0),
+                        Color.TRANSPARENT
+                    )
+                )
+            }
+
+            val bannerContainer = FrameLayout(activity).apply {
+                clipChildren = false
+                clipToPadding = false
+                elevation = dp(24).toFloat()
+            }
+
+            bannerContainer.addView(
+                leftGlow,
+                FrameLayout.LayoutParams(
+                    glowWidth,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Gravity.START
+                )
+            )
+            bannerContainer.addView(
+                rightGlow,
+                FrameLayout.LayoutParams(
+                    glowWidth,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Gravity.END
+                )
+            )
+            bannerContainer.addView(
                 banner,
                 FrameLayout.LayoutParams(
                     bannerWidth,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER_HORIZONTAL
+                )
+            )
+
+            rootLayout.addView(
+                bannerContainer,
+                FrameLayout.LayoutParams(
+                    bannerWidth + glowWidth * 2,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     Gravity.TOP or Gravity.CENTER_HORIZONTAL
                 ).apply {
@@ -513,19 +566,19 @@ class DownloadController(
                 }
             )
 
-            activeBanner = banner
-            banner.translationY = -dp(100).toFloat()
-            banner.alpha = 0f
-            banner.bringToFront()
+            activeBanner = bannerContainer
+            bannerContainer.translationY = -dp(100).toFloat()
+            bannerContainer.alpha = 0f
+            bannerContainer.bringToFront()
 
             // Start the five-second timer only after the banner is fully visible.
             // This prevents the banner from disappearing before the bar reaches zero.
-            banner.animate()
+            bannerContainer.animate()
                 .translationY(0f)
                 .alpha(1f)
                 .setDuration(220L)
                 .withEndAction {
-                    if (activeBanner === banner) {
+                    if (activeBanner === bannerContainer) {
                         timer.animate()
                             .scaleX(0f)
                             .setDuration(BANNER_DURATION_MS)
@@ -533,15 +586,15 @@ class DownloadController(
                             .start()
 
                         val hideRunnable = Runnable {
-                            if (activeBanner !== banner) return@Runnable
+                            if (activeBanner !== bannerContainer) return@Runnable
 
-                            banner.animate()
-                                .translationY((-banner.height - dp(18)).toFloat())
+                            bannerContainer.animate()
+                                .translationY((-bannerContainer.height - dp(18)).toFloat())
                                 .alpha(0f)
                                 .setDuration(220L)
                                 .withEndAction {
-                                    if (activeBanner === banner) {
-                                        rootLayout.removeView(banner)
+                                    if (activeBanner === bannerContainer) {
+                                        rootLayout.removeView(bannerContainer)
                                         activeBanner = null
                                     }
                                 }
