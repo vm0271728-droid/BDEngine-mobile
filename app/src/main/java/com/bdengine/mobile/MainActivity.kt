@@ -1,10 +1,12 @@
 package com.bdengine.mobile
 
 import android.annotation.SuppressLint
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -13,6 +15,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
@@ -22,36 +25,38 @@ import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var rootLayout: FrameLayout
     private lateinit var webView: WebView
     private lateinit var settingsPanel: LinearLayout
-    private lateinit var resolutionValue: TextView
+    private lateinit var settingsButton: ImageView
+    private lateinit var scaleTitle: TextView
+    private lateinit var scaleSubtitle: TextView
 
     private val preferences by lazy {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
     }
 
-    private var resolutionScale = DEFAULT_RESOLUTION_SCALE
-
-    // Scale factor currently applied on top of WebView's own desktop auto-fit scale.
-    // It is reset to 1.0 whenever a new page starts loading.
-    private var appliedWorkspaceFactor = 1f
+    private var scalePercent = DEFAULT_SCALE_PERCENT
 
     companion object {
         private const val BDE_URL = "https://block-display.com/editor"
-        private const val PREFS_NAME = "bdengine_mobile_settings"
-        private const val PREF_RESOLUTION_SCALE = "resolution_scale"
-        private const val DEFAULT_RESOLUTION_SCALE = 0
 
-        // User-facing behavior:
-        // 0%   = slightly larger than the original automatic desktop fit.
-        // 100% = considerably more workspace / smaller interface.
-        // We deliberately do NOT touch the site's meta viewport or CSS layout.
-        private const val FACTOR_AT_ZERO = 1.12f
-        private const val FACTOR_AT_HUNDRED = 0.62f
+        private const val PREFS_NAME = "bdengine_mobile_settings"
+        private const val PREF_SCALE_PERCENT_V2 = "smallest_width_percent_v2"
+        private const val PREF_GEAR_X = "gear_x"
+        private const val PREF_GEAR_Y = "gear_y"
+
+        // Requested mapping:
+        // 30% = 600 dp, every 1% = 10 dp.
+        // Therefore 0% = 300 dp and 100% = 1300 dp.
+        private const val DEFAULT_SCALE_PERCENT = 30
+        private const val DP_AT_ZERO = 300
+        private const val DP_PER_PERCENT = 10
 
         private const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
@@ -87,26 +92,39 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent()
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         hideSystemUi()
-        resolutionScale = preferences.getInt(
-            PREF_RESOLUTION_SCALE,
-            DEFAULT_RESOLUTION_SCALE
+
+        scalePercent = preferences.getInt(
+            PREF_SCALE_PERCENT_V2,
+            DEFAULT_SCALE_PERCENT
         ).coerceIn(0, 100)
 
-        val root = FrameLayout(this)
-        webView = WebView(this)
-        root.addView(
+        rootLayout = FrameLayout(this).apply {
+            clipChildren = true
+            clipToPadding = true
+        }
+
+        webView = WebView(this).apply {
+            pivotX = 0f
+            pivotY = 0f
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isHorizontalScrollBarEnabled = false
+            isVerticalScrollBarEnabled = false
+        }
+
+        rootLayout.addView(
             webView,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         )
-        setContentView(root)
+
+        setContentView(rootLayout)
 
         val cookies = CookieManager.getInstance()
         cookies.setAcceptCookie(true)
@@ -118,15 +136,14 @@ class MainActivity : AppCompatActivity() {
             databaseEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
             userAgentString = DESKTOP_USER_AGENT
-
-            // This is the important part: let WebView build a normal wide desktop
-            // viewport and automatically fit it to the phone. The floating slider
-            // only changes the native page scale afterwards.
             useWideViewPort = true
-            loadWithOverviewMode = true
+            loadWithOverviewMode = false
 
+            // Prevent accidental browser-like pinch zoom / elastic scaling.
+            setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
+
             mediaPlaybackRequiresUserGesture = false
             allowFileAccess = true
             allowContentAccess = true
@@ -135,29 +152,21 @@ class MainActivity : AppCompatActivity() {
         }
 
         configureDesktopIdentity()
-        createFloatingSettings(root)
+        createFloatingSettings()
 
         webView.webViewClient = object : WebViewClient() {
-            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                super.onPageStarted(view, url, favicon)
-                // A navigation creates a fresh auto-fit baseline.
-                appliedWorkspaceFactor = 1f
-            }
-
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-
-                // Give Chromium a moment to finish its own overview/desktop fit,
-                // then apply the user's saved workspace setting on top of it.
-                webView.postDelayed({
-                    applyWorkspaceScale(resolutionScale)
-                }, 250L)
-
                 CookieManager.getInstance().flush()
             }
         }
 
         webView.webChromeClient = WebChromeClient()
+
+        rootLayout.post {
+            applySmallestWidthScale(scalePercent)
+            restoreGearPosition()
+        }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -175,37 +184,49 @@ class MainActivity : AppCompatActivity() {
             webView.loadUrl(BDE_URL)
         } else {
             webView.restoreState(savedInstanceState)
-            // restoreState can restore the previous browser scale as well. Treat it
-            // as the baseline and re-apply the saved workspace value after layout.
-            appliedWorkspaceFactor = 1f
-            webView.postDelayed({ applyWorkspaceScale(resolutionScale) }, 400L)
+            rootLayout.post { applySmallestWidthScale(scalePercent) }
         }
     }
 
-    private fun createFloatingSettings(root: FrameLayout) {
+    private fun createFloatingSettings() {
         settingsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setPadding(dp(18), dp(16), dp(18), dp(14))
             visibility = View.GONE
-            elevation = dp(10).toFloat()
-            background = roundedBackground(Color.argb(235, 28, 28, 32), dp(14).toFloat())
+            elevation = dp(14).toFloat()
+            background = roundedBackground(
+                fillColor = Color.argb(245, 20, 22, 28),
+                radius = dp(18).toFloat(),
+                strokeColor = Color.argb(55, 255, 255, 255),
+                strokeWidth = dp(1)
+            )
         }
 
-        val title = TextView(this).apply {
+        val heading = TextView(this).apply {
             text = "Масштаб интерфейса"
-            textSize = 14f
+            textSize = 15f
             setTextColor(Color.WHITE)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
 
-        resolutionValue = TextView(this).apply {
+        scaleTitle = TextView(this).apply {
+            textSize = 24f
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(8), 0, 0)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+
+        scaleSubtitle = TextView(this).apply {
             textSize = 12f
-            setTextColor(Color.LTGRAY)
-            setPadding(0, dp(4), 0, dp(2))
+            setTextColor(Color.rgb(170, 176, 188))
+            setPadding(0, dp(2), 0, dp(8))
         }
 
         val seekBar = SeekBar(this).apply {
             max = 100
-            progress = resolutionScale
+            progress = scalePercent
+            progressTintList = ColorStateList.valueOf(Color.rgb(105, 214, 210))
+            thumbTintList = ColorStateList.valueOf(Color.rgb(220, 250, 248))
             setPadding(0, 0, 0, 0)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(
@@ -213,114 +234,255 @@ class MainActivity : AppCompatActivity() {
                     progress: Int,
                     fromUser: Boolean
                 ) {
-                    resolutionScale = progress.coerceIn(0, 100)
-                    updateResolutionLabel()
+                    scalePercent = progress.coerceIn(0, 100)
+                    updateScaleLabels()
 
                     if (fromUser) {
-                        applyWorkspaceScale(resolutionScale)
-                        saveResolutionScale()
+                        applySmallestWidthScale(scalePercent)
+                        saveScalePercent()
                     }
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
 
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                    saveResolutionScale()
+                    saveScalePercent()
                 }
             })
         }
 
-        settingsPanel.addView(
-            title,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-        settingsPanel.addView(
-            resolutionValue,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
+        val helper = TextView(this).apply {
+            text = "0% = 300 dp   •   100% = 1300 dp"
+            textSize = 10.5f
+            setTextColor(Color.rgb(126, 132, 146))
+            setPadding(0, dp(4), 0, 0)
+        }
+
+        settingsPanel.addView(heading)
+        settingsPanel.addView(scaleTitle)
+        settingsPanel.addView(scaleSubtitle)
         settingsPanel.addView(
             seekBar,
-            LinearLayout.LayoutParams(dp(210), ViewGroup.LayoutParams.WRAP_CONTENT)
+            LinearLayout.LayoutParams(dp(240), ViewGroup.LayoutParams.WRAP_CONTENT)
         )
+        settingsPanel.addView(helper)
 
-        updateResolutionLabel()
+        updateScaleLabels()
 
-        root.addView(
+        rootLayout.addView(
             settingsPanel,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.END or Gravity.CENTER_VERTICAL
-            ).apply {
-                marginEnd = dp(70)
-            }
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
         )
 
-        val gearButton = TextView(this).apply {
-            text = "⚙"
-            textSize = 25f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            elevation = dp(12).toFloat()
-            background = roundedBackground(Color.argb(235, 35, 35, 40), dp(24).toFloat())
-            setOnClickListener {
-                settingsPanel.visibility = if (settingsPanel.visibility == View.VISIBLE) {
-                    View.GONE
-                } else {
-                    View.VISIBLE
+        settingsButton = ImageView(this).apply {
+            setImageResource(R.drawable.ic_settings)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            elevation = dp(16).toFloat()
+            background = roundedBackground(
+                fillColor = Color.argb(242, 26, 29, 36),
+                radius = dp(28).toFloat(),
+                strokeColor = Color.argb(105, 105, 214, 210),
+                strokeWidth = dp(1)
+            )
+        }
+
+        rootLayout.addView(
+            settingsButton,
+            FrameLayout.LayoutParams(dp(56), dp(56))
+        )
+
+        enableGearDragging()
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun enableGearDragging() {
+        var downRawX = 0f
+        var downRawY = 0f
+        var startX = 0f
+        var startY = 0f
+        var dragging = false
+        val dragThreshold = dp(6).toFloat()
+
+        settingsButton.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    startX = view.x
+                    startY = view.y
+                    dragging = false
+
+                    view.animate()
+                        .scaleX(0.94f)
+                        .scaleY(0.94f)
+                        .setDuration(80L)
+                        .start()
+                    true
                 }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downRawX
+                    val dy = event.rawY - downRawY
+
+                    if (!dragging && hypot(dx.toDouble(), dy.toDouble()) > dragThreshold) {
+                        dragging = true
+                        settingsPanel.visibility = View.GONE
+                    }
+
+                    if (dragging) {
+                        val maxX = (rootLayout.width - view.width).coerceAtLeast(0).toFloat()
+                        val maxY = (rootLayout.height - view.height).coerceAtLeast(0).toFloat()
+
+                        view.x = (startX + dx).coerceIn(0f, maxX)
+                        view.y = (startY + dy).coerceIn(0f, maxY)
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    view.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(100L)
+                        .start()
+
+                    if (dragging) {
+                        saveGearPosition()
+                    } else if (event.actionMasked == MotionEvent.ACTION_UP) {
+                        toggleSettingsPanel()
+                    }
+                    true
+                }
+
+                else -> false
             }
         }
+    }
 
-        root.addView(
-            gearButton,
-            FrameLayout.LayoutParams(
-                dp(50),
-                dp(50),
-                Gravity.END or Gravity.CENTER_VERTICAL
-            ).apply {
-                marginEnd = dp(12)
-            }
+    private fun toggleSettingsPanel() {
+        if (settingsPanel.visibility == View.VISIBLE) {
+            settingsPanel.visibility = View.GONE
+            return
+        }
+
+        settingsPanel.visibility = View.VISIBLE
+        settingsPanel.post { positionSettingsPanelNearGear() }
+    }
+
+    private fun positionSettingsPanelNearGear() {
+        if (!::settingsPanel.isInitialized || !::settingsButton.isInitialized) return
+
+        val margin = dp(12).toFloat()
+        val panelWidth = settingsPanel.width.toFloat()
+        val panelHeight = settingsPanel.height.toFloat()
+        val rootWidth = rootLayout.width.toFloat()
+        val rootHeight = rootLayout.height.toFloat()
+
+        val placeLeft = settingsButton.x > rootWidth / 2f
+        val wantedX = if (placeLeft) {
+            settingsButton.x - panelWidth - margin
+        } else {
+            settingsButton.x + settingsButton.width + margin
+        }
+
+        val wantedY = settingsButton.y + settingsButton.height / 2f - panelHeight / 2f
+
+        settingsPanel.x = wantedX.coerceIn(
+            margin,
+            (rootWidth - panelWidth - margin).coerceAtLeast(margin)
+        )
+        settingsPanel.y = wantedY.coerceIn(
+            margin,
+            (rootHeight - panelHeight - margin).coerceAtLeast(margin)
         )
     }
 
-    private fun applyWorkspaceScale(progress: Int) {
-        if (!::webView.isInitialized) return
+    /**
+     * Local analogue of Android's Developer options -> Smallest width.
+     *
+     * Because the app is locked to landscape, the screen height is normally the
+     * short side. We create a larger/smaller logical WebView canvas and scale it
+     * back to the physical window. The website therefore sees the same kind of
+     * logical workspace change that changing Android's smallest-width dp causes,
+     * while the rest of the phone remains untouched.
+     */
+    private fun applySmallestWidthScale(progress: Int) {
+        if (!::rootLayout.isInitialized || !::webView.isInitialized) return
 
-        val targetFactor = workspaceFactorFor(progress)
-        val currentFactor = appliedWorkspaceFactor.coerceAtLeast(0.01f)
-        val relativeFactor = targetFactor / currentFactor
+        rootLayout.post {
+            val rootWidthPx = rootLayout.width.toFloat()
+            val rootHeightPx = rootLayout.height.toFloat()
+            if (rootWidthPx <= 0f || rootHeightPx <= 0f) return@post
 
-        // zoomBy changes Chromium's native page scale without rewriting the site's
-        // viewport, styles, media queries or DOM. This keeps BDEngine's desktop
-        // layout intact while changing how much workspace fits on screen.
-        try {
-            webView.zoomBy(relativeFactor.coerceIn(0.01f, 100f))
-            appliedWorkspaceFactor = targetFactor
-        } catch (_: IllegalArgumentException) {
-            // Extremely defensive fallback for vendor WebView implementations.
+            val density = resources.displayMetrics.density
+            val targetSmallestDp = smallestWidthDpFor(progress).toFloat()
+            val physicalShortSidePx = minOf(rootWidthPx, rootHeightPx)
+            val virtualShortSidePx = targetSmallestDp * density
+            val viewScale = physicalShortSidePx / virtualShortSidePx
+
+            if (viewScale <= 0f) return@post
+
+            val virtualWidthPx = (rootWidthPx / viewScale).roundToInt().coerceAtLeast(1)
+            val virtualHeightPx = (rootHeightPx / viewScale).roundToInt().coerceAtLeast(1)
+
+            val params = webView.layoutParams as FrameLayout.LayoutParams
+            if (params.width != virtualWidthPx || params.height != virtualHeightPx) {
+                params.width = virtualWidthPx
+                params.height = virtualHeightPx
+                webView.layoutParams = params
+            }
+
+            webView.pivotX = 0f
+            webView.pivotY = 0f
+            webView.scaleX = viewScale
+            webView.scaleY = viewScale
+            webView.translationX = 0f
+            webView.translationY = 0f
+            webView.requestLayout()
         }
     }
 
-    private fun workspaceFactorFor(progress: Int): Float {
-        val fraction = progress.coerceIn(0, 100) / 100f
-        return FACTOR_AT_ZERO + (FACTOR_AT_HUNDRED - FACTOR_AT_ZERO) * fraction
+    private fun smallestWidthDpFor(progress: Int): Int {
+        return DP_AT_ZERO + progress.coerceIn(0, 100) * DP_PER_PERCENT
     }
 
-    private fun updateResolutionLabel() {
-        if (!::resolutionValue.isInitialized) return
-        resolutionValue.text = "$resolutionScale%"
+    private fun updateScaleLabels() {
+        if (!::scaleTitle.isInitialized || !::scaleSubtitle.isInitialized) return
+        val targetDp = smallestWidthDpFor(scalePercent)
+        scaleTitle.text = "$targetDp dp"
+        scaleSubtitle.text = "$scalePercent%  •  шаг 10 dp"
     }
 
-    private fun saveResolutionScale() {
+    private fun saveScalePercent() {
         preferences.edit()
-            .putInt(PREF_RESOLUTION_SCALE, resolutionScale)
+            .putInt(PREF_SCALE_PERCENT_V2, scalePercent)
+            .apply()
+    }
+
+    private fun restoreGearPosition() {
+        if (!::settingsButton.isInitialized) return
+
+        val savedX = preferences.getFloat(PREF_GEAR_X, -1f)
+        val savedY = preferences.getFloat(PREF_GEAR_Y, -1f)
+
+        val defaultX = (rootLayout.width - settingsButton.width - dp(14)).toFloat()
+        val defaultY = (rootLayout.height - settingsButton.height).coerceAtLeast(0) / 2f
+
+        val maxX = (rootLayout.width - settingsButton.width).coerceAtLeast(0).toFloat()
+        val maxY = (rootLayout.height - settingsButton.height).coerceAtLeast(0).toFloat()
+
+        settingsButton.x = (if (savedX >= 0f) savedX else defaultX).coerceIn(0f, maxX)
+        settingsButton.y = (if (savedY >= 0f) savedY else defaultY).coerceIn(0f, maxY)
+    }
+
+    private fun saveGearPosition() {
+        if (!::settingsButton.isInitialized) return
+        preferences.edit()
+            .putFloat(PREF_GEAR_X, settingsButton.x)
+            .putFloat(PREF_GEAR_Y, settingsButton.y)
             .apply()
     }
 
@@ -345,7 +507,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        saveResolutionScale()
+        saveScalePercent()
+        saveGearPosition()
         webView.saveState(outState)
         super.onSaveInstanceState(outState)
     }
@@ -354,17 +517,20 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         webView.onResume()
         hideSystemUi()
+        rootLayout.post { applySmallestWidthScale(scalePercent) }
     }
 
     override fun onPause() {
-        saveResolutionScale()
+        saveScalePercent()
+        saveGearPosition()
         CookieManager.getInstance().flush()
         webView.onPause()
         super.onPause()
     }
 
     override fun onDestroy() {
-        saveResolutionScale()
+        saveScalePercent()
+        saveGearPosition()
         CookieManager.getInstance().flush()
         webView.stopLoading()
         webView.webChromeClient = null
@@ -373,11 +539,19 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    private fun roundedBackground(color: Int, radius: Float): GradientDrawable {
+    private fun roundedBackground(
+        fillColor: Int,
+        radius: Float,
+        strokeColor: Int? = null,
+        strokeWidth: Int = 0
+    ): GradientDrawable {
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            setColor(color)
+            setColor(fillColor)
             cornerRadius = radius
+            if (strokeColor != null && strokeWidth > 0) {
+                setStroke(strokeWidth, strokeColor)
+            }
         }
     }
 
