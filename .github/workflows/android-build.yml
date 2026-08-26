@@ -46,7 +46,46 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare stable signing
+        id: signing
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            if [[ "$COMMIT_MESSAGE" == release:* ]]; then
+              echo "Release signing is not configured. Add ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD repository secrets." >&2
+              exit 1
+            fi
+            echo "Stable signing is not configured; this development build will use the runner-local debug key."
+            exit 0
+          fi
+
+          if [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "Signing keystore is present but one or more signing secrets are missing." >&2
+            exit 1
+          fi
+
+          SIGNING_DIR="$RUNNER_TEMP/bdengine-signing"
+          KEYSTORE_PATH="$SIGNING_DIR/bdengine-release.jks"
+          mkdir -p "$SIGNING_DIR"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+          echo "path=$KEYSTORE_PATH" >> "$GITHUB_OUTPUT"
+
       - name: Build debug APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.signing.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: gradle --no-daemon assembleDebug
 
       - name: Package source code
