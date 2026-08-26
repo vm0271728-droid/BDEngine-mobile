@@ -36,15 +36,22 @@ class MainActivity : AppCompatActivity() {
 
     private var resolutionScale = DEFAULT_RESOLUTION_SCALE
 
+    // Scale factor currently applied on top of WebView's own desktop auto-fit scale.
+    // It is reset to 1.0 whenever a new page starts loading.
+    private var appliedWorkspaceFactor = 1f
+
     companion object {
         private const val BDE_URL = "https://block-display.com/editor"
         private const val PREFS_NAME = "bdengine_mobile_settings"
         private const val PREF_RESOLUTION_SCALE = "resolution_scale"
         private const val DEFAULT_RESOLUTION_SCALE = 0
 
-        // 0% = readable desktop workspace, 100% = much wider virtual workspace.
-        private const val MIN_VIEWPORT_WIDTH = 1100
-        private const val MAX_VIEWPORT_WIDTH = 2200
+        // User-facing behavior:
+        // 0%   = slightly larger than the original automatic desktop fit.
+        // 100% = considerably more workspace / smaller interface.
+        // We deliberately do NOT touch the site's meta viewport or CSS layout.
+        private const val FACTOR_AT_ZERO = 1.12f
+        private const val FACTOR_AT_HUNDRED = 0.62f
 
         private const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
@@ -111,8 +118,13 @@ class MainActivity : AppCompatActivity() {
             databaseEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
             userAgentString = DESKTOP_USER_AGENT
+
+            // This is the important part: let WebView build a normal wide desktop
+            // viewport and automatically fit it to the phone. The floating slider
+            // only changes the native page scale afterwards.
             useWideViewPort = true
-            loadWithOverviewMode = false
+            loadWithOverviewMode = true
+
             builtInZoomControls = false
             displayZoomControls = false
             mediaPlaybackRequiresUserGesture = false
@@ -126,9 +138,21 @@ class MainActivity : AppCompatActivity() {
         createFloatingSettings(root)
 
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                // A navigation creates a fresh auto-fit baseline.
+                appliedWorkspaceFactor = 1f
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                applyVirtualResolution(resolutionScale)
+
+                // Give Chromium a moment to finish its own overview/desktop fit,
+                // then apply the user's saved workspace setting on top of it.
+                webView.postDelayed({
+                    applyWorkspaceScale(resolutionScale)
+                }, 250L)
+
                 CookieManager.getInstance().flush()
             }
         }
@@ -151,6 +175,10 @@ class MainActivity : AppCompatActivity() {
             webView.loadUrl(BDE_URL)
         } else {
             webView.restoreState(savedInstanceState)
+            // restoreState can restore the previous browser scale as well. Treat it
+            // as the baseline and re-apply the saved workspace value after layout.
+            appliedWorkspaceFactor = 1f
+            webView.postDelayed({ applyWorkspaceScale(resolutionScale) }, 400L)
         }
     }
 
@@ -189,7 +217,7 @@ class MainActivity : AppCompatActivity() {
                     updateResolutionLabel()
 
                     if (fromUser) {
-                        applyVirtualResolution(resolutionScale)
+                        applyWorkspaceScale(resolutionScale)
                         saveResolutionScale()
                     }
                 }
@@ -262,42 +290,32 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun applyVirtualResolution(progress: Int) {
+    private fun applyWorkspaceScale(progress: Int) {
         if (!::webView.isInitialized) return
 
-        val viewportWidth = viewportWidthFor(progress)
-        val script = """
-            (() => {
-                try {
-                    let viewport = document.querySelector('meta[name="viewport"]');
-                    if (!viewport) {
-                        viewport = document.createElement('meta');
-                        viewport.name = 'viewport';
-                        (document.head || document.documentElement).appendChild(viewport);
-                    }
+        val targetFactor = workspaceFactorFor(progress)
+        val currentFactor = appliedWorkspaceFactor.coerceAtLeast(0.01f)
+        val relativeFactor = targetFactor / currentFactor
 
-                    viewport.setAttribute(
-                        'content',
-                        'width=$viewportWidth, user-scalable=yes'
-                    );
-
-                    window.dispatchEvent(new Event('resize'));
-                } catch (_) {}
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(script, null)
+        // zoomBy changes Chromium's native page scale without rewriting the site's
+        // viewport, styles, media queries or DOM. This keeps BDEngine's desktop
+        // layout intact while changing how much workspace fits on screen.
+        try {
+            webView.zoomBy(relativeFactor.coerceIn(0.01f, 100f))
+            appliedWorkspaceFactor = targetFactor
+        } catch (_: IllegalArgumentException) {
+            // Extremely defensive fallback for vendor WebView implementations.
+        }
     }
 
-    private fun viewportWidthFor(progress: Int): Int {
+    private fun workspaceFactorFor(progress: Int): Float {
         val fraction = progress.coerceIn(0, 100) / 100f
-        return (MIN_VIEWPORT_WIDTH +
-            (MAX_VIEWPORT_WIDTH - MIN_VIEWPORT_WIDTH) * fraction).roundToInt()
+        return FACTOR_AT_ZERO + (FACTOR_AT_HUNDRED - FACTOR_AT_ZERO) * fraction
     }
 
     private fun updateResolutionLabel() {
         if (!::resolutionValue.isInitialized) return
-        resolutionValue.text = "$resolutionScale%  •  ${viewportWidthFor(resolutionScale)} px"
+        resolutionValue.text = "$resolutionScale%"
     }
 
     private fun saveResolutionScale() {
