@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val ciKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+val ciKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+val ciKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+val ciKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+
 android {
     namespace = "com.bdengine.mobile"
     compileSdk = 36
@@ -15,8 +20,30 @@ android {
         versionName = "0.2.0"
     }
 
+    signingConfigs {
+        if (ciKeystorePath != null) {
+            create("ci") {
+                storeFile = file(ciKeystorePath)
+                storePassword = ciKeystorePassword
+                keyAlias = ciKeyAlias
+                keyPassword = ciKeyPassword
+            }
+        }
+    }
+
     buildTypes {
+        getByName("debug") {
+            // When CI signing credentials are present, development APKs use the same
+            // persistent key instead of a new runner-local Android debug keystore.
+            if (ciKeystorePath != null) {
+                signingConfig = signingConfigs.getByName("ci")
+            }
+        }
+
         release {
+            if (ciKeystorePath != null) {
+                signingConfig = signingConfigs.getByName("ci")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
