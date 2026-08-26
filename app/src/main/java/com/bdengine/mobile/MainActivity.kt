@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -27,7 +29,6 @@ import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import java.util.Locale
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -50,7 +51,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private var scalePercent = DEFAULT_SCALE_PERCENT
-    private var hasResumedOnce = false
     private var splashDismissRunnable: Runnable? = null
 
     private val usageTicker = object : Runnable {
@@ -88,6 +88,11 @@ class MainActivity : AppCompatActivity() {
         private const val SPLASH_DURATION_MS = 3000L
         private const val USAGE_CHECKPOINT_MS = 30_000L
 
+        private const val MINUTE_MS = 60_000L
+        private const val DAY_MS = 24L * 60L * MINUTE_MS
+        private const val MONTH_DAYS = 30L
+        private const val YEAR_DAYS = 365L
+
         private const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
@@ -118,6 +123,41 @@ class MainActivity : AppCompatActivity() {
                         });
                     }
                 } catch (_) {}
+            })();
+        """.trimIndent()
+
+        private val EDITOR_SCROLL_LOCK_SCRIPT = """
+            (() => {
+                const lockRoot = () => {
+                    try {
+                        const html = document.documentElement;
+                        const body = document.body;
+
+                        if (html) {
+                            html.style.setProperty('overflow', 'hidden', 'important');
+                            html.style.setProperty('overscroll-behavior', 'none', 'important');
+                            html.style.setProperty('height', '100%', 'important');
+                        }
+
+                        if (body) {
+                            body.style.setProperty('overflow', 'hidden', 'important');
+                            body.style.setProperty('overscroll-behavior', 'none', 'important');
+                            body.style.setProperty('height', '100%', 'important');
+                        }
+
+                        if (window.scrollX !== 0 || window.scrollY !== 0) {
+                            window.scrollTo(0, 0);
+                        }
+                    } catch (_) {}
+                };
+
+                lockRoot();
+                document.addEventListener('DOMContentLoaded', lockRoot, { once: true });
+                window.addEventListener('scroll', () => {
+                    if (window.scrollX !== 0 || window.scrollY !== 0) {
+                        window.scrollTo(0, 0);
+                    }
+                }, { passive: true });
             })();
         """.trimIndent()
 
@@ -201,6 +241,14 @@ class MainActivity : AppCompatActivity() {
             overScrollMode = View.OVER_SCROLL_NEVER
             isHorizontalScrollBarEnabled = false
             isVerticalScrollBarEnabled = false
+
+            // Keep Chromium on the GPU path while the editor is active.
+            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                // Strong renderer binding while visible; Android may waive it in background.
+                setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
+            }
         }
 
         rootLayout.addView(
@@ -239,12 +287,31 @@ class MainActivity : AppCompatActivity() {
 
         configureDesktopIdentity()
         createFloatingSettings()
-        createSplashScreen(usageTracker.loadingTextForEntry())
+        createSplashScreen(
+            initialText = usageTracker.loadingTextForEntry(),
+            showImmediately = savedInstanceState == null
+        )
+
+        webView.setOnScrollChangeListener { _, scrollX, scrollY, _, _ ->
+            // The editor itself is a fixed workspace. Only its internal panels should scroll.
+            // If Chromium tries to move the root document, pin it back to the origin.
+            if (isEditorUrl(webView.url) && (scrollX != 0 || scrollY != 0)) {
+                webView.scrollTo(0, 0)
+            }
+        }
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                view?.evaluateJavascript(HIDE_SIGNUP_BANNER_SCRIPT, null)
+
+                if (isEditorUrl(url)) {
+                    // Fallback for WebView implementations without document-start support.
+                    view?.evaluateJavascript(EDITOR_SCROLL_LOCK_SCRIPT, null)
+                    view?.scrollTo(0, 0)
+                } else {
+                    view?.evaluateJavascript(HIDE_SIGNUP_BANNER_SCRIPT, null)
+                }
+
                 CookieManager.getInstance().flush()
             }
         }
@@ -275,12 +342,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun createSplashScreen(initialText: String) {
+    private fun createSplashScreen(initialText: String, showImmediately: Boolean) {
         splashOverlay = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             isClickable = true
             isFocusable = true
             elevation = dp(100).toFloat()
+            visibility = View.GONE
         }
 
         val content = LinearLayout(this).apply {
@@ -331,7 +399,9 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
-        showSplash(initialText)
+        if (showImmediately) {
+            showSplash(initialText)
+        }
     }
 
     private fun showSplash(text: String) {
@@ -667,6 +737,10 @@ class MainActivity : AppCompatActivity() {
             webView.translationX = 0f
             webView.translationY = 0f
             webView.requestLayout()
+
+            if (isEditorUrl(webView.url)) {
+                webView.scrollTo(0, 0)
+            }
         }
     }
 
@@ -685,23 +759,54 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun formatUsageDuration(milliseconds: Long): String {
-        var totalSeconds = (milliseconds.coerceAtLeast(0L) / 1000L)
-        val days = totalSeconds / 86_400L
-        totalSeconds %= 86_400L
-        val hours = totalSeconds / 3_600L
-        totalSeconds %= 3_600L
-        val minutes = totalSeconds / 60L
-        val seconds = totalSeconds % 60L
+        val safeMs = milliseconds.coerceAtLeast(0L)
+        val totalMinutes = safeMs / MINUTE_MS
 
-        val clock = String.format(
-            Locale.getDefault(),
-            "%02d:%02d:%02d",
-            hours,
-            minutes,
-            seconds
-        )
+        if (totalMinutes < 60L) {
+            return "$totalMinutes мин"
+        }
 
-        return if (days > 0L) "${days}д $clock" else clock
+        // From one hour onward the display intentionally becomes coarse.
+        val totalDays = (safeMs / DAY_MS).coerceAtLeast(1L)
+
+        if (totalDays < MONTH_DAYS) {
+            return "$totalDays ${russianDays(totalDays)}"
+        }
+
+        if (totalDays < YEAR_DAYS) {
+            val months = totalDays / MONTH_DAYS
+            val days = totalDays % MONTH_DAYS
+            return "$months мес $days ${russianDays(days)}"
+        }
+
+        val years = totalDays / YEAR_DAYS
+        val daysAfterYears = totalDays % YEAR_DAYS
+        val months = daysAfterYears / MONTH_DAYS
+        val days = daysAfterYears % MONTH_DAYS
+
+        return "$years ${russianYears(years)} $months мес $days ${russianDays(days)}"
+    }
+
+    private fun russianDays(value: Long): String {
+        val mod100 = value % 100
+        val mod10 = value % 10
+        return when {
+            mod100 in 11..14 -> "дней"
+            mod10 == 1L -> "день"
+            mod10 in 2..4 -> "дня"
+            else -> "дней"
+        }
+    }
+
+    private fun russianYears(value: Long): String {
+        val mod100 = value % 100
+        val mod10 = value % 10
+        return when {
+            mod100 in 11..14 -> "лет"
+            mod10 == 1L -> "год"
+            mod10 in 2..4 -> "года"
+            else -> "лет"
+        }
     }
 
     private fun saveScalePercent() {
@@ -749,8 +854,31 @@ class MainActivity : AppCompatActivity() {
             WebViewCompat.addDocumentStartJavaScript(
                 webView,
                 DESKTOP_IDENTITY_SCRIPT,
-                setOf("https://block-display.com")
+                setOf(
+                    "https://block-display.com",
+                    "https://bdengine.app",
+                    "https://beta.bdengine.app"
+                )
             )
+
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                EDITOR_SCROLL_LOCK_SCRIPT,
+                setOf(
+                    "https://bdengine.app",
+                    "https://beta.bdengine.app"
+                )
+            )
+        }
+    }
+
+    private fun isEditorUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        return try {
+            val host = Uri.parse(url).host.orEmpty().lowercase()
+            host == "bdengine.app" || host.endsWith(".bdengine.app")
+        } catch (_: Throwable) {
+            false
         }
     }
 
@@ -772,13 +900,11 @@ class MainActivity : AppCompatActivity() {
         mainHandler.removeCallbacks(usageCheckpoint)
         mainHandler.postDelayed(usageCheckpoint, USAGE_CHECKPOINT_MS)
 
-        if (hasResumedOnce) {
-            showSplash(usageTracker.loadingTextForEntry())
-        } else {
-            hasResumedOnce = true
+        // Deliberately no splash here: returning from background must be instant.
+        rootLayout.post {
+            applySmallestWidthScale(scalePercent)
+            if (isEditorUrl(webView.url)) webView.scrollTo(0, 0)
         }
-
-        rootLayout.post { applySmallestWidthScale(scalePercent) }
     }
 
     override fun onPause() {
