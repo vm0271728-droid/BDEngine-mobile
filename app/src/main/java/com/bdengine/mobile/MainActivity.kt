@@ -5,6 +5,8 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -25,6 +27,7 @@ import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import java.util.Locale
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -35,12 +38,38 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settingsPanel: LinearLayout
     private lateinit var settingsButton: ImageView
     private lateinit var scaleValue: TextView
+    private lateinit var usageValue: TextView
+    private lateinit var splashOverlay: FrameLayout
+    private lateinit var splashText: TextView
+    private lateinit var usageTracker: AppUsageTracker
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val preferences by lazy {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
     }
 
     private var scalePercent = DEFAULT_SCALE_PERCENT
+    private var hasResumedOnce = false
+    private var splashDismissRunnable: Runnable? = null
+
+    private val usageTicker = object : Runnable {
+        override fun run() {
+            if (::settingsPanel.isInitialized && settingsPanel.visibility == View.VISIBLE) {
+                updateUsageValue()
+                mainHandler.postDelayed(this, 1000L)
+            }
+        }
+    }
+
+    private val usageCheckpoint = object : Runnable {
+        override fun run() {
+            if (::usageTracker.isInitialized) {
+                usageTracker.checkpoint()
+                mainHandler.postDelayed(this, USAGE_CHECKPOINT_MS)
+            }
+        }
+    }
 
     companion object {
         private const val BDE_URL = "https://block-display.com/editor"
@@ -55,8 +84,9 @@ class MainActivity : AppCompatActivity() {
         private const val DP_AT_ZERO = 300
         private const val DP_PER_PERCENT = 10
 
-        // 56 dp reduced by ~28% => ~40 dp.
         private const val SETTINGS_BUTTON_SIZE_DP = 40
+        private const val SPLASH_DURATION_MS = 3000L
+        private const val USAGE_CHECKPOINT_MS = 30_000L
 
         private const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
@@ -91,9 +121,6 @@ class MainActivity : AppCompatActivity() {
             })();
         """.trimIndent()
 
-        // The website injects a fixed sign-up bar while scrolling. It covers the
-        // actual content in the app, so hide only a fixed/sticky ancestor that
-        // contains the exact call-to-action text. Normal page content is untouched.
         private val HIDE_SIGNUP_BANNER_SCRIPT = """
             (() => {
                 const marker = 'Sign up to create and share content.';
@@ -156,6 +183,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         hideSystemUi()
+        usageTracker = AppUsageTracker(this)
 
         scalePercent = preferences.getInt(
             PREF_SCALE_PERCENT_V2,
@@ -211,6 +239,7 @@ class MainActivity : AppCompatActivity() {
 
         configureDesktopIdentity()
         createFloatingSettings()
+        createSplashScreen(usageTracker.loadingTextForEntry())
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -229,12 +258,11 @@ class MainActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (settingsPanel.visibility == View.VISIBLE) {
-                    settingsPanel.visibility = View.GONE
-                } else if (webView.canGoBack()) {
-                    webView.goBack()
-                } else {
-                    finish()
+                when {
+                    splashOverlay.visibility == View.VISIBLE -> finish()
+                    settingsPanel.visibility == View.VISIBLE -> hideSettingsPanel()
+                    webView.canGoBack() -> webView.goBack()
+                    else -> finish()
                 }
             }
         })
@@ -245,6 +273,86 @@ class MainActivity : AppCompatActivity() {
             webView.restoreState(savedInstanceState)
             rootLayout.post { applySmallestWidthScale(scalePercent) }
         }
+    }
+
+    private fun createSplashScreen(initialText: String) {
+        splashOverlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isClickable = true
+            isFocusable = true
+            elevation = dp(100).toFloat()
+        }
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            translationY = dp(34).toFloat()
+        }
+
+        splashText = TextView(this).apply {
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            maxWidth = dp(560)
+            setPadding(dp(24), 0, dp(24), 0)
+        }
+
+        val spinner = SegmentSpinnerView(this)
+
+        content.addView(
+            splashText,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        content.addView(
+            spinner,
+            LinearLayout.LayoutParams(dp(60), dp(60)).apply {
+                topMargin = dp(20)
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+        )
+
+        splashOverlay.addView(
+            content,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
+        )
+
+        rootLayout.addView(
+            splashOverlay,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        showSplash(initialText)
+    }
+
+    private fun showSplash(text: String) {
+        if (!::splashOverlay.isInitialized) return
+
+        splashDismissRunnable?.let(mainHandler::removeCallbacks)
+        hideSettingsPanel()
+        settingsButton.visibility = View.GONE
+        splashText.text = text
+        splashOverlay.visibility = View.VISIBLE
+        splashOverlay.bringToFront()
+
+        val dismissRunnable = Runnable {
+            splashOverlay.visibility = View.GONE
+            settingsButton.visibility = View.VISIBLE
+            settingsButton.bringToFront()
+            rootLayout.post { restoreGearPosition() }
+        }
+
+        splashDismissRunnable = dismissRunnable
+        mainHandler.postDelayed(dismissRunnable, SPLASH_DURATION_MS)
     }
 
     private fun createFloatingSettings() {
@@ -291,13 +399,7 @@ class MainActivity : AppCompatActivity() {
             scaleLabel,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        scaleRow.addView(
-            scaleValue,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
+        scaleRow.addView(scaleValue)
 
         val seekBar = SeekBar(this).apply {
             max = 100
@@ -328,6 +430,35 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
+        val divider = View(this).apply {
+            setBackgroundColor(Color.argb(32, 255, 255, 255))
+        }
+
+        val usageRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(9), 0, 0)
+        }
+
+        val usageLabel = TextView(this).apply {
+            text = "В приложении"
+            textSize = 13.5f
+            setTextColor(Color.rgb(215, 219, 228))
+        }
+
+        usageValue = TextView(this).apply {
+            textSize = 13.5f
+            gravity = Gravity.END
+            setTextColor(Color.rgb(170, 176, 188))
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+
+        usageRow.addView(
+            usageLabel,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        usageRow.addView(usageValue)
+
         settingsPanel.addView(heading)
         settingsPanel.addView(
             scaleRow,
@@ -337,8 +468,22 @@ class MainActivity : AppCompatActivity() {
             seekBar,
             LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
         )
+        settingsPanel.addView(
+            divider,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(1)
+            ).apply {
+                topMargin = dp(7)
+            }
+        )
+        settingsPanel.addView(
+            usageRow,
+            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
 
         updateScaleValue()
+        updateUsageValue()
 
         rootLayout.addView(
             settingsPanel,
@@ -403,7 +548,7 @@ class MainActivity : AppCompatActivity() {
 
                     if (!dragging && hypot(dx.toDouble(), dy.toDouble()) > dragThreshold) {
                         dragging = true
-                        settingsPanel.visibility = View.GONE
+                        hideSettingsPanel()
                     }
 
                     if (dragging) {
@@ -438,12 +583,27 @@ class MainActivity : AppCompatActivity() {
 
     private fun toggleSettingsPanel() {
         if (settingsPanel.visibility == View.VISIBLE) {
-            settingsPanel.visibility = View.GONE
+            hideSettingsPanel()
             return
         }
 
+        if (splashOverlay.visibility == View.VISIBLE) return
+
+        updateUsageValue()
         settingsPanel.visibility = View.VISIBLE
+        settingsPanel.bringToFront()
+        settingsButton.bringToFront()
         settingsPanel.post { positionSettingsPanelNearGear() }
+
+        mainHandler.removeCallbacks(usageTicker)
+        mainHandler.post(usageTicker)
+    }
+
+    private fun hideSettingsPanel() {
+        if (::settingsPanel.isInitialized) {
+            settingsPanel.visibility = View.GONE
+        }
+        mainHandler.removeCallbacks(usageTicker)
     }
 
     private fun positionSettingsPanelNearGear() {
@@ -519,6 +679,31 @@ class MainActivity : AppCompatActivity() {
         scaleValue.text = "${smallestWidthDpFor(scalePercent)} dp"
     }
 
+    private fun updateUsageValue() {
+        if (!::usageValue.isInitialized || !::usageTracker.isInitialized) return
+        usageValue.text = formatUsageDuration(usageTracker.totalUsageMsNow())
+    }
+
+    private fun formatUsageDuration(milliseconds: Long): String {
+        var totalSeconds = (milliseconds.coerceAtLeast(0L) / 1000L)
+        val days = totalSeconds / 86_400L
+        totalSeconds %= 86_400L
+        val hours = totalSeconds / 3_600L
+        totalSeconds %= 3_600L
+        val minutes = totalSeconds / 60L
+        val seconds = totalSeconds % 60L
+
+        val clock = String.format(
+            Locale.getDefault(),
+            "%02d:%02d:%02d",
+            hours,
+            minutes,
+            seconds
+        )
+
+        return if (days > 0L) "${days}д $clock" else clock
+    }
+
     private fun saveScalePercent() {
         preferences.edit()
             .putInt(PREF_SCALE_PERCENT_V2, scalePercent)
@@ -563,13 +748,14 @@ class MainActivity : AppCompatActivity() {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(
                 webView,
-                "$DESKTOP_IDENTITY_SCRIPT\n$HIDE_SIGNUP_BANNER_SCRIPT",
+                DESKTOP_IDENTITY_SCRIPT,
                 setOf("https://block-display.com")
             )
         }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        usageTracker.checkpoint()
         saveScalePercent()
         saveGearPosition()
         webView.saveState(outState)
@@ -578,12 +764,27 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+
         webView.onResume()
         hideSystemUi()
+        usageTracker.startSession()
+
+        mainHandler.removeCallbacks(usageCheckpoint)
+        mainHandler.postDelayed(usageCheckpoint, USAGE_CHECKPOINT_MS)
+
+        if (hasResumedOnce) {
+            showSplash(usageTracker.loadingTextForEntry())
+        } else {
+            hasResumedOnce = true
+        }
+
         rootLayout.post { applySmallestWidthScale(scalePercent) }
     }
 
     override fun onPause() {
+        mainHandler.removeCallbacks(usageTicker)
+        mainHandler.removeCallbacks(usageCheckpoint)
+        usageTracker.stopSessionAndRecordExit()
         saveScalePercent()
         saveGearPosition()
         CookieManager.getInstance().flush()
@@ -592,6 +793,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        splashDismissRunnable?.let(mainHandler::removeCallbacks)
+        mainHandler.removeCallbacks(usageTicker)
+        mainHandler.removeCallbacks(usageCheckpoint)
         saveScalePercent()
         saveGearPosition()
         CookieManager.getInstance().flush()
