@@ -2,7 +2,6 @@ package com.bdengine.mobile
 
 import android.app.Activity
 import android.app.Application
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -83,71 +82,10 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
             })();
         """.trimIndent()
 
-        private val MAIN_PAGE_SCROLL_GUARD_SCRIPT = """
-            (() => {
-                if (window.__bdengineRootScrollGuardInstalled) return;
-                window.__bdengineRootScrollGuardInstalled = true;
-
-                const applyRootRules = () => {
-                    try {
-                        const html = document.documentElement;
-                        const body = document.body;
-
-                        if (html) {
-                            html.style.setProperty('overflow-x', 'hidden', 'important');
-                            html.style.setProperty('overscroll-behavior-x', 'none', 'important');
-                            html.style.setProperty('overscroll-behavior-y', 'none', 'important');
-                        }
-
-                        if (body) {
-                            body.style.setProperty('overflow-x', 'hidden', 'important');
-                            body.style.setProperty('overscroll-behavior-x', 'none', 'important');
-                            body.style.setProperty('overscroll-behavior-y', 'none', 'important');
-                        }
-                    } catch (_) {}
-                };
-
-                const clampRootScroll = () => {
-                    try {
-                        const html = document.documentElement;
-                        const body = document.body;
-                        const documentHeight = Math.max(
-                            html ? html.scrollHeight : 0,
-                            body ? body.scrollHeight : 0
-                        );
-                        const maxY = Math.max(0, documentHeight - window.innerHeight);
-                        const safeY = Math.min(Math.max(window.scrollY || 0, 0), maxY);
-
-                        if (window.scrollX !== 0 || Math.abs((window.scrollY || 0) - safeY) > 0.5) {
-                            window.scrollTo(0, safeY);
-                        }
-                    } catch (_) {}
-                };
-
-                applyRootRules();
-
-                if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', () => {
-                        applyRootRules();
-                        clampRootScroll();
-                    }, { once: true });
-                } else {
-                    clampRootScroll();
-                }
-
-                window.addEventListener('scroll', clampRootScroll, { passive: true });
-                window.addEventListener('resize', clampRootScroll, { passive: true });
-            })();
-        """.trimIndent()
-
         private val TRUSTED_ORIGINS = setOf(
             "https://block-display.com",
             "https://bdengine.app",
             "https://beta.bdengine.app"
-        )
-
-        private val BLOCK_DISPLAY_ORIGINS = setOf(
-            "https://block-display.com"
         )
     }
 
@@ -195,11 +133,7 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
 
             // Current document.
             controller.installPageBridge()
-            installMainPageScrollGuard(webView)
-            webView.postDelayed({
-                controller.installPageBridge()
-                installMainPageScrollGuard(webView)
-            }, 500L)
+            webView.postDelayed({ controller.installPageBridge() }, 500L)
 
             // Every later BDEngine navigation, including the editor domain.
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
@@ -208,30 +142,7 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
                     DOWNLOAD_BRIDGE_SCRIPT,
                     TRUSTED_ORIGINS
                 )
-
-                // The public/main site must remain vertically scrollable. We only stop
-                // root overscroll and horizontal drift that can expose an empty area.
-                WebViewCompat.addDocumentStartJavaScript(
-                    webView,
-                    MAIN_PAGE_SCROLL_GUARD_SCRIPT,
-                    BLOCK_DISPLAY_ORIGINS
-                )
             }
-        }
-    }
-
-    private fun installMainPageScrollGuard(webView: WebView) {
-        if (!isBlockDisplayUrl(webView.url)) return
-        webView.evaluateJavascript(MAIN_PAGE_SCROLL_GUARD_SCRIPT, null)
-    }
-
-    private fun isBlockDisplayUrl(url: String?): Boolean {
-        if (url.isNullOrBlank()) return false
-        return try {
-            val host = Uri.parse(url).host.orEmpty().lowercase()
-            host == "block-display.com" || host == "www.block-display.com"
-        } catch (_: Throwable) {
-            false
         }
     }
 
