@@ -34,8 +34,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var settingsPanel: LinearLayout
     private lateinit var settingsButton: ImageView
-    private lateinit var scaleTitle: TextView
-    private lateinit var scaleSubtitle: TextView
+    private lateinit var scaleValue: TextView
 
     private val preferences by lazy {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -51,12 +50,13 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_GEAR_X = "gear_x"
         private const val PREF_GEAR_Y = "gear_y"
 
-        // Requested mapping:
         // 30% = 600 dp, every 1% = 10 dp.
-        // Therefore 0% = 300 dp and 100% = 1300 dp.
         private const val DEFAULT_SCALE_PERCENT = 30
         private const val DP_AT_ZERO = 300
         private const val DP_PER_PERCENT = 10
+
+        // 56 dp reduced by ~28% => ~40 dp.
+        private const val SETTINGS_BUTTON_SIZE_DP = 40
 
         private const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
@@ -88,6 +88,65 @@ class MainActivity : AppCompatActivity() {
                         });
                     }
                 } catch (_) {}
+            })();
+        """.trimIndent()
+
+        // The website injects a fixed sign-up bar while scrolling. It covers the
+        // actual content in the app, so hide only a fixed/sticky ancestor that
+        // contains the exact call-to-action text. Normal page content is untouched.
+        private val HIDE_SIGNUP_BANNER_SCRIPT = """
+            (() => {
+                const marker = 'Sign up to create and share content.';
+
+                const hideBanner = () => {
+                    try {
+                        const elements = document.querySelectorAll('body *');
+
+                        for (const element of elements) {
+                            const text = (element.textContent || '')
+                                .replace(/\s+/g, ' ')
+                                .trim();
+
+                            if (!text.includes(marker)) continue;
+
+                            let current = element;
+                            for (let i = 0; i < 6 && current; i++, current = current.parentElement) {
+                                const style = getComputedStyle(current);
+                                if (style.position === 'fixed' || style.position === 'sticky') {
+                                    current.style.setProperty('display', 'none', 'important');
+                                    current.style.setProperty('visibility', 'hidden', 'important');
+                                    current.style.setProperty('pointer-events', 'none', 'important');
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (_) {}
+                };
+
+                let pending = false;
+                const schedule = () => {
+                    if (pending) return;
+                    pending = true;
+                    requestAnimationFrame(() => {
+                        pending = false;
+                        hideBanner();
+                    });
+                };
+
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', hideBanner, { once: true });
+                } else {
+                    hideBanner();
+                }
+
+                new MutationObserver(schedule).observe(document.documentElement, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: ['class', 'style']
+                });
+
+                window.addEventListener('scroll', schedule, { passive: true });
             })();
         """.trimIndent()
     }
@@ -139,7 +198,6 @@ class MainActivity : AppCompatActivity() {
             useWideViewPort = true
             loadWithOverviewMode = false
 
-            // Prevent accidental browser-like pinch zoom / elastic scaling.
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
@@ -157,6 +215,7 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                view?.evaluateJavascript(HIDE_SIGNUP_BANNER_SCRIPT, null)
                 CookieManager.getInstance().flush()
             }
         }
@@ -191,43 +250,61 @@ class MainActivity : AppCompatActivity() {
     private fun createFloatingSettings() {
         settingsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(16), dp(18), dp(14))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
             visibility = View.GONE
             elevation = dp(14).toFloat()
             background = roundedBackground(
-                fillColor = Color.argb(245, 20, 22, 28),
-                radius = dp(18).toFloat(),
-                strokeColor = Color.argb(55, 255, 255, 255),
+                fillColor = Color.argb(246, 18, 20, 25),
+                radius = dp(16).toFloat(),
+                strokeColor = Color.argb(48, 255, 255, 255),
                 strokeWidth = dp(1)
             )
         }
 
         val heading = TextView(this).apply {
-            text = "Масштаб интерфейса"
-            textSize = 15f
+            text = "Настройки"
+            textSize = 16f
             setTextColor(Color.WHITE)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, dp(10))
+        }
+
+        val scaleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val scaleLabel = TextView(this).apply {
+            text = "Масштаб"
+            textSize = 13.5f
+            setTextColor(Color.rgb(215, 219, 228))
+        }
+
+        scaleValue = TextView(this).apply {
+            textSize = 13.5f
+            setTextColor(Color.rgb(105, 214, 210))
+            gravity = Gravity.END
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
 
-        scaleTitle = TextView(this).apply {
-            textSize = 24f
-            setTextColor(Color.WHITE)
-            setPadding(0, dp(8), 0, 0)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        }
-
-        scaleSubtitle = TextView(this).apply {
-            textSize = 12f
-            setTextColor(Color.rgb(170, 176, 188))
-            setPadding(0, dp(2), 0, dp(8))
-        }
+        scaleRow.addView(
+            scaleLabel,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        scaleRow.addView(
+            scaleValue,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         val seekBar = SeekBar(this).apply {
             max = 100
             progress = scalePercent
             progressTintList = ColorStateList.valueOf(Color.rgb(105, 214, 210))
             thumbTintList = ColorStateList.valueOf(Color.rgb(220, 250, 248))
-            setPadding(0, 0, 0, 0)
+            setPadding(0, dp(3), 0, 0)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(
                     seekBar: SeekBar?,
@@ -235,7 +312,7 @@ class MainActivity : AppCompatActivity() {
                     fromUser: Boolean
                 ) {
                     scalePercent = progress.coerceIn(0, 100)
-                    updateScaleLabels()
+                    updateScaleValue()
 
                     if (fromUser) {
                         applySmallestWidthScale(scalePercent)
@@ -251,23 +328,17 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
-        val helper = TextView(this).apply {
-            text = "0% = 300 dp   •   100% = 1300 dp"
-            textSize = 10.5f
-            setTextColor(Color.rgb(126, 132, 146))
-            setPadding(0, dp(4), 0, 0)
-        }
-
         settingsPanel.addView(heading)
-        settingsPanel.addView(scaleTitle)
-        settingsPanel.addView(scaleSubtitle)
+        settingsPanel.addView(
+            scaleRow,
+            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
         settingsPanel.addView(
             seekBar,
-            LinearLayout.LayoutParams(dp(240), ViewGroup.LayoutParams.WRAP_CONTENT)
+            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
         )
-        settingsPanel.addView(helper)
 
-        updateScaleLabels()
+        updateScaleValue()
 
         rootLayout.addView(
             settingsPanel,
@@ -279,19 +350,22 @@ class MainActivity : AppCompatActivity() {
 
         settingsButton = ImageView(this).apply {
             setImageResource(R.drawable.ic_settings)
-            setPadding(dp(14), dp(14), dp(14), dp(14))
-            elevation = dp(16).toFloat()
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            elevation = dp(12).toFloat()
             background = roundedBackground(
-                fillColor = Color.argb(242, 26, 29, 36),
-                radius = dp(28).toFloat(),
-                strokeColor = Color.argb(105, 105, 214, 210),
+                fillColor = Color.argb(244, 24, 27, 33),
+                radius = dp(20).toFloat(),
+                strokeColor = Color.argb(90, 105, 214, 210),
                 strokeWidth = dp(1)
             )
         }
 
         rootLayout.addView(
             settingsButton,
-            FrameLayout.LayoutParams(dp(56), dp(56))
+            FrameLayout.LayoutParams(
+                dp(SETTINGS_BUTTON_SIZE_DP),
+                dp(SETTINGS_BUTTON_SIZE_DP)
+            )
         )
 
         enableGearDragging()
@@ -375,7 +449,7 @@ class MainActivity : AppCompatActivity() {
     private fun positionSettingsPanelNearGear() {
         if (!::settingsPanel.isInitialized || !::settingsButton.isInitialized) return
 
-        val margin = dp(12).toFloat()
+        val margin = dp(10).toFloat()
         val panelWidth = settingsPanel.width.toFloat()
         val panelHeight = settingsPanel.height.toFloat()
         val rootWidth = rootLayout.width.toFloat()
@@ -400,15 +474,6 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    /**
-     * Local analogue of Android's Developer options -> Smallest width.
-     *
-     * Because the app is locked to landscape, the screen height is normally the
-     * short side. We create a larger/smaller logical WebView canvas and scale it
-     * back to the physical window. The website therefore sees the same kind of
-     * logical workspace change that changing Android's smallest-width dp causes,
-     * while the rest of the phone remains untouched.
-     */
     private fun applySmallestWidthScale(progress: Int) {
         if (!::rootLayout.isInitialized || !::webView.isInitialized) return
 
@@ -449,11 +514,9 @@ class MainActivity : AppCompatActivity() {
         return DP_AT_ZERO + progress.coerceIn(0, 100) * DP_PER_PERCENT
     }
 
-    private fun updateScaleLabels() {
-        if (!::scaleTitle.isInitialized || !::scaleSubtitle.isInitialized) return
-        val targetDp = smallestWidthDpFor(scalePercent)
-        scaleTitle.text = "$targetDp dp"
-        scaleSubtitle.text = "$scalePercent%  •  шаг 10 dp"
+    private fun updateScaleValue() {
+        if (!::scaleValue.isInitialized) return
+        scaleValue.text = "${smallestWidthDpFor(scalePercent)} dp"
     }
 
     private fun saveScalePercent() {
@@ -500,7 +563,7 @@ class MainActivity : AppCompatActivity() {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(
                 webView,
-                DESKTOP_IDENTITY_SCRIPT,
+                "$DESKTOP_IDENTITY_SCRIPT\n$HIDE_SIGNUP_BANNER_SCRIPT",
                 setOf("https://block-display.com")
             )
         }
