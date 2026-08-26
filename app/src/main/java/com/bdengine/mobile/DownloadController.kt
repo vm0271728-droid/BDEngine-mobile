@@ -17,7 +17,6 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
-import android.text.TextUtils
 import android.util.Base64
 import android.view.Gravity
 import android.view.View
@@ -47,6 +46,7 @@ class DownloadController(
     companion object {
         private const val BRIDGE_NAME = "BDEngineDownloads"
         private const val DOWNLOAD_FOLDER = "BDEngine"
+        private const val DISPLAY_DOWNLOAD_PATH = "/storage/emulated/0/Download/BDEngine"
         private const val BANNER_DURATION_MS = 5_000L
         private const val STORAGE_PERMISSION_REQUEST = 9104
     }
@@ -77,14 +77,14 @@ class DownloadController(
                     val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
                     val status = if (statusIndex >= 0) cursor.getInt(statusIndex) else -1
 
-                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                        showBanner("Файл сохранён", fileName, success = true)
-                    } else {
-                        showBanner("Ошибка загрузки", fileName, success = false)
+                    // A successful completion must not replace the five-second
+                    // "Идет загрузка..." banner before its timer has finished.
+                    if (status != DownloadManager.STATUS_SUCCESSFUL) {
+                        showBanner("Ошибка загрузки", fileName, isError = true)
                     }
                 }
             } catch (_: Throwable) {
-                showBanner("Ошибка загрузки", fileName, success = false)
+                showBanner("Ошибка загрузки", fileName, isError = true)
             }
         }
     }
@@ -112,7 +112,7 @@ class DownloadController(
                 else -> showBanner(
                     "Не удалось скачать",
                     "Неподдерживаемый тип ссылки",
-                    success = false
+                    isError = true
                 )
             }
         }
@@ -209,6 +209,7 @@ class DownloadController(
 
     fun destroy() {
         bannerHideRunnable?.let(mainHandler::removeCallbacks)
+        activeBanner?.animate()?.cancel()
         activeBanner?.let(rootLayout::removeView)
         activeBanner = null
 
@@ -259,8 +260,9 @@ class DownloadController(
 
             val id = downloadManager.enqueue(request)
             pendingDownloads[id] = fileName
+            showDownloadBanner()
         } catch (_: Throwable) {
-            showBanner("Ошибка загрузки", fileName, success = false)
+            showBanner("Ошибка загрузки", fileName, isError = true)
         }
     }
 
@@ -293,6 +295,8 @@ class DownloadController(
     }
 
     private fun saveDataUrlAsync(dataUrl: String, fileName: String, mimeHint: String?) {
+        showDownloadBanner()
+
         ioExecutor.execute {
             try {
                 val parsed = decodeDataUrl(dataUrl)
@@ -301,9 +305,9 @@ class DownloadController(
                     ?: "application/octet-stream"
                 val finalName = safeFileName(fileName, mime)
                 saveBytes(parsed.second, finalName, mime)
-                showBanner("Файл сохранён", finalName, success = true)
+                // Do not replace the active five-second download banner on success.
             } catch (_: Throwable) {
-                showBanner("Ошибка загрузки", fileName, success = false)
+                showBanner("Ошибка загрузки", fileName, isError = true)
             }
         }
     }
@@ -391,7 +395,7 @@ class DownloadController(
         showBanner(
             "Нужно разрешение",
             "Разреши доступ к файлам и повтори загрузку",
-            success = false
+            isError = true
         )
         return false
     }
@@ -432,72 +436,56 @@ class DownloadController(
         return result
     }
 
-    private fun showBanner(title: String, subtitle: String, success: Boolean) {
+    private fun showDownloadBanner() {
+        showBanner(
+            title = "Идет загрузка...",
+            subtitle = DISPLAY_DOWNLOAD_PATH,
+            isError = false
+        )
+    }
+
+    private fun showBanner(title: String, subtitle: String, isError: Boolean) {
         activity.runOnUiThread {
             bannerHideRunnable?.let(mainHandler::removeCallbacks)
+            bannerHideRunnable = null
+            activeBanner?.animate()?.cancel()
             activeBanner?.let(rootLayout::removeView)
 
-            val accent = if (success) Color.rgb(105, 214, 210) else Color.rgb(240, 112, 112)
+            // Same turquoise accent used by the dp value in Settings.
+            val accent = Color.rgb(105, 214, 210)
 
             val banner = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 elevation = dp(24).toFloat()
                 background = roundedBackground(
-                    fillColor = Color.argb(250, 18, 20, 25),
-                    radius = dp(16).toFloat(),
-                    strokeColor = Color.argb(70, 255, 255, 255),
+                    fillColor = Color.BLACK,
+                    radius = 0f,
+                    strokeColor = accent,
                     strokeWidth = dp(1)
                 )
             }
 
             val content = LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(14), dp(11), dp(16), dp(10))
-            }
-
-            val icon = TextView(activity).apply {
-                text = if (success) "✓" else "!"
-                textSize = 17f
-                gravity = Gravity.CENTER
-                setTextColor(accent)
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                background = roundedBackground(
-                    fillColor = Color.argb(35, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                    radius = dp(16).toFloat(),
-                    strokeColor = Color.argb(95, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                    strokeWidth = dp(1)
-                )
-            }
-
-            val textColumn = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(11), 0, 0, 0)
+                setPadding(dp(16), dp(12), dp(16), dp(11))
             }
 
             val titleView = TextView(activity).apply {
                 text = title
                 textSize = 14.5f
-                setTextColor(Color.WHITE)
+                setTextColor(if (isError) Color.rgb(240, 112, 112) else Color.WHITE)
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
             }
 
             val subtitleView = TextView(activity).apply {
                 text = subtitle
-                textSize = 11.5f
+                textSize = 11f
                 setTextColor(Color.rgb(174, 180, 192))
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(2), 0, 0)
+                setPadding(0, dp(3), 0, 0)
             }
 
-            textColumn.addView(titleView)
-            textColumn.addView(subtitleView)
-            content.addView(icon, LinearLayout.LayoutParams(dp(32), dp(32)))
-            content.addView(
-                textColumn,
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            )
+            content.addView(titleView)
+            content.addView(subtitleView)
 
             val timer = View(activity).apply {
                 setBackgroundColor(accent)
@@ -512,7 +500,7 @@ class DownloadController(
             )
 
             val availableWidth = (rootLayout.width - dp(28)).coerceAtLeast(dp(280))
-            val bannerWidth = minOf(dp(410), availableWidth)
+            val bannerWidth = minOf(dp(430), availableWidth)
 
             rootLayout.addView(
                 banner,
@@ -530,34 +518,41 @@ class DownloadController(
             banner.alpha = 0f
             banner.bringToFront()
 
+            // Start the five-second timer only after the banner is fully visible.
+            // This prevents the banner from disappearing before the bar reaches zero.
             banner.animate()
                 .translationY(0f)
                 .alpha(1f)
                 .setDuration(220L)
-                .start()
+                .withEndAction {
+                    if (activeBanner === banner) {
+                        timer.animate()
+                            .scaleX(0f)
+                            .setDuration(BANNER_DURATION_MS)
+                            .setInterpolator(LinearInterpolator())
+                            .start()
 
-            timer.animate()
-                .scaleX(0f)
-                .setDuration(BANNER_DURATION_MS)
-                .setInterpolator(LinearInterpolator())
-                .start()
+                        val hideRunnable = Runnable {
+                            if (activeBanner !== banner) return@Runnable
 
-            val hideRunnable = Runnable {
-                banner.animate()
-                    .translationY((-banner.height - dp(18)).toFloat())
-                    .alpha(0f)
-                    .setDuration(220L)
-                    .withEndAction {
-                        if (activeBanner === banner) {
-                            rootLayout.removeView(banner)
-                            activeBanner = null
+                            banner.animate()
+                                .translationY((-banner.height - dp(18)).toFloat())
+                                .alpha(0f)
+                                .setDuration(220L)
+                                .withEndAction {
+                                    if (activeBanner === banner) {
+                                        rootLayout.removeView(banner)
+                                        activeBanner = null
+                                    }
+                                }
+                                .start()
                         }
-                    }
-                    .start()
-            }
 
-            bannerHideRunnable = hideRunnable
-            mainHandler.postDelayed(hideRunnable, BANNER_DURATION_MS)
+                        bannerHideRunnable = hideRunnable
+                        mainHandler.postDelayed(hideRunnable, BANNER_DURATION_MS)
+                    }
+                }
+                .start()
         }
     }
 
@@ -598,7 +593,7 @@ class DownloadController(
             showBanner(
                 "Ошибка загрузки",
                 fileName?.takeIf { it.isNotBlank() } ?: "BDEngine-export",
-                success = false
+                isError = true
             )
         }
     }
