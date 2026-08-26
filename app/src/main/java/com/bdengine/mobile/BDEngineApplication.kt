@@ -145,10 +145,12 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
     }
 
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+        if (activity is DeviceFilePickerActivity) return
         attachWhenReady(activity)
     }
 
     override fun onActivityResumed(activity: Activity) {
+        if (activity is DeviceFilePickerActivity) return
         attachWhenReady(activity)
     }
 
@@ -157,6 +159,7 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
     }
 
     private fun attachWhenReady(activity: Activity) {
+        if (activity is DeviceFilePickerActivity) return
         if (downloadControllers.containsKey(activity)) return
 
         activity.window.decorView.post {
@@ -176,6 +179,11 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
             }
+
+            // BDEngine's "Открыть с устройства" is a standard web file chooser.
+            // Route it through Android's Storage Access Framework instead of leaving
+            // the WebView with the default no-op WebChromeClient.
+            webView.webChromeClient = BDEngineWebChromeClient(activity)
 
             val controller = DownloadController(activity, rootLayout, webView)
             controller.attach()
