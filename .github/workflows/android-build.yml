@@ -36,9 +36,19 @@ jobs:
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 
+      - name: Package source code
+        run: git archive --format=zip --output=BDEngine-mobile-source.zip HEAD
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: BDEngine-mobile-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload source code
+        uses: actions/upload-artifact@v4
+        with:
+          name: BDEngine-mobile-source
+          path: BDEngine-mobile-source.zip
           if-no-files-found: error
