@@ -1,6 +1,8 @@
 package com.bdengine.mobile
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -15,6 +17,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -123,6 +126,45 @@ class MainActivity : AppCompatActivity() {
                         });
                     }
                 } catch (_) {}
+            })();
+        """.trimIndent()
+
+        private val GOOGLE_AUTH_LINK_SCRIPT = """
+            (() => {
+                if (window.__bdeGoogleExternalAuthInstalled) return;
+                window.__bdeGoogleExternalAuthInstalled = true;
+
+                const isGoogleLogin = (rawUrl) => {
+                    try {
+                        const url = new URL(rawUrl, window.location.href);
+                        const host = url.hostname.toLowerCase();
+                        const provider = (url.searchParams.get('loginSocial') || '').toLowerCase();
+
+                        return host === 'accounts.google.com' ||
+                            host.endsWith('.accounts.google.com') ||
+                            host === 'oauth2.googleapis.com' ||
+                            ((host === 'block-display.com' || host === 'www.block-display.com') &&
+                                url.pathname.includes('wp-login.php') && provider === 'google');
+                    } catch (_) {
+                        return false;
+                    }
+                };
+
+                document.addEventListener('click', (event) => {
+                    const target = event.target;
+                    if (!target || !target.closest) return;
+                    const anchor = target.closest('a');
+                    if (!anchor) return;
+
+                    const href = anchor.href || anchor.getAttribute('href') || '';
+                    if (!isGoogleLogin(href)) return;
+
+                    // Force same-WebView navigation so Android can intercept it and
+                    // hand the whole OAuth flow to a trusted external browser.
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    window.location.assign(href);
+                }, true);
             })();
         """.trimIndent()
 
@@ -301,8 +343,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val url = request?.url?.toString() ?: return false
+                return openGoogleAuthExternallyIfNeeded(url)
+            }
+
+            @Suppress("DEPRECATION")
+            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                return url?.let(::openGoogleAuthExternallyIfNeeded) ?: false
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+
+                view?.evaluateJavascript(GOOGLE_AUTH_LINK_SCRIPT, null)
 
                 if (isEditorUrl(url)) {
                     // Fallback for WebView implementations without document-start support.
@@ -863,12 +917,53 @@ class MainActivity : AppCompatActivity() {
 
             WebViewCompat.addDocumentStartJavaScript(
                 webView,
+                GOOGLE_AUTH_LINK_SCRIPT,
+                setOf("https://block-display.com")
+            )
+
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
                 EDITOR_SCROLL_LOCK_SCRIPT,
                 setOf(
                     "https://bdengine.app",
                     "https://beta.bdengine.app"
                 )
             )
+        }
+    }
+
+    private fun openGoogleAuthExternallyIfNeeded(url: String): Boolean {
+        if (!isGoogleAuthUrl(url)) return false
+
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+            }
+            startActivity(intent)
+            true
+        } catch (_: ActivityNotFoundException) {
+            false
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun isGoogleAuthUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+
+        return try {
+            val uri = Uri.parse(url)
+            val host = uri.host.orEmpty().lowercase()
+            val path = uri.path.orEmpty().lowercase()
+            val provider = uri.getQueryParameter("loginSocial").orEmpty().lowercase()
+
+            host == "accounts.google.com" ||
+                host.endsWith(".accounts.google.com") ||
+                host == "oauth2.googleapis.com" ||
+                ((host == "block-display.com" || host == "www.block-display.com") &&
+                    path.contains("wp-login.php") && provider == "google")
+        } catch (_: Throwable) {
+            false
         }
     }
 
