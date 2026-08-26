@@ -461,7 +461,7 @@ class DownloadController(
                     fillColor = Color.BLACK,
                     radius = 0f,
                     strokeColor = accent,
-                    strokeWidth = dp(1)
+                    strokeWidth = 1
                 )
             }
 
