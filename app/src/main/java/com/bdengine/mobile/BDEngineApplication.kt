@@ -25,16 +25,62 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
                 const bridge = window.BDEngineDownloads;
                 if (!bridge) return;
 
+                const normalizeLabel = value => String(value || '')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toLowerCase();
+
+                const clickedLabel = target => {
+                    let node = target;
+                    for (let i = 0; i < 6 && node; i++, node = node.parentElement) {
+                        if (!node.getAttribute) continue;
+                        const label = normalizeLabel(
+                            node.getAttribute('aria-label') ||
+                            node.getAttribute('title') ||
+                            node.textContent || ''
+                        );
+                        if (label && label.length <= 120) return label;
+                    }
+                    return '';
+                };
+
+                const isSaveToDevice = label => {
+                    const russian = label.includes('сохранить на устройство') &&
+                        !label.includes('сохранить на устройство как');
+                    const english = label.includes('save to device') &&
+                        !label.includes('save to device as');
+                    return russian || english;
+                };
+
+                document.addEventListener('click', event => {
+                    if (isSaveToDevice(clickedLabel(event.target))) {
+                        window.__bdengineNativeProjectSaveUntil = Date.now() + 5000;
+                        try { bridge.armProjectSave(); } catch (_) {}
+                    }
+                }, true);
+
+                const consumeProjectSave = () => {
+                    const until = Number(window.__bdengineNativeProjectSaveUntil || 0);
+                    const projectSave = until >= Date.now();
+                    if (projectSave) window.__bdengineNativeProjectSaveUntil = 0;
+                    return projectSave;
+                };
+
                 const transfer = (href, suggestedName) => {
                     if (!href || (!href.startsWith('blob:') && !href.startsWith('data:'))) {
                         return false;
                     }
 
                     const fileName = suggestedName || 'BDEngine-export';
+                    const projectSave = consumeProjectSave();
 
                     try {
                         if (href.startsWith('data:')) {
-                            bridge.saveDataUrl(href, fileName, '');
+                            if (projectSave) {
+                                bridge.saveProjectDataUrl(href, fileName, '');
+                            } else {
+                                bridge.saveDataUrl(href, fileName, '');
+                            }
                             return true;
                         }
 
@@ -42,11 +88,14 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
                             .then(response => response.blob())
                             .then(blob => {
                                 const reader = new FileReader();
-                                reader.onloadend = () => bridge.saveDataUrl(
-                                    String(reader.result || ''),
-                                    fileName,
-                                    blob.type || ''
-                                );
+                                reader.onloadend = () => {
+                                    const dataUrl = String(reader.result || '');
+                                    if (projectSave) {
+                                        bridge.saveProjectDataUrl(dataUrl, fileName, blob.type || '');
+                                    } else {
+                                        bridge.saveDataUrl(dataUrl, fileName, blob.type || '');
+                                    }
+                                };
                                 reader.onerror = () => bridge.reportError(fileName);
                                 reader.readAsDataURL(blob);
                             })

@@ -2,6 +2,7 @@ package com.bdengine.mobile
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.BroadcastReceiver
 import android.content.ContentValues
@@ -16,6 +17,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Base64
 import android.view.Gravity
@@ -46,8 +48,11 @@ class DownloadController(
     companion object {
         private const val BRIDGE_NAME = "BDEngineDownloads"
         private const val DOWNLOAD_FOLDER = "BDEngine"
+        private const val SAVED_FOLDER = "BDEngine/Saved"
         private const val DISPLAY_DOWNLOAD_PATH = "/storage/emulated/0/Download/BDEngine"
+        private const val DISPLAY_SAVED_PATH = "/storage/emulated/0/Download/BDEngine/Saved"
         private const val BANNER_DURATION_MS = 5_000L
+        private const val PROJECT_SAVE_ARM_MS = 5_000L
         private const val STORAGE_PERMISSION_REQUEST = 9104
     }
 
@@ -61,6 +66,10 @@ class DownloadController(
     private var receiverRegistered = false
     private var activeBanner: View? = null
     private var bannerHideRunnable: Runnable? = null
+    private var projectFormatDialog: AlertDialog? = null
+
+    @Volatile
+    private var projectSaveArmedUntilElapsed = 0L
 
     private val completionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -98,17 +107,43 @@ class DownloadController(
                 URLUtil.guessFileName(url, contentDisposition, mimeType),
                 mimeType
             )
+            val projectSave = consumeProjectSaveArm()
 
             when (Uri.parse(url).scheme?.lowercase()) {
-                "http", "https" -> enqueueNetworkDownload(
-                    url = url,
-                    userAgent = userAgent,
-                    mimeType = mimeType,
-                    fileName = fileName
-                )
+                "http", "https" -> {
+                    if (projectSave) {
+                        showNetworkProjectFormatChoice(
+                            url = url,
+                            userAgent = userAgent,
+                            mimeType = mimeType,
+                            fileName = fileName
+                        )
+                    } else {
+                        enqueueNetworkDownload(
+                            url = url,
+                            userAgent = userAgent,
+                            mimeType = mimeType,
+                            fileName = fileName
+                        )
+                    }
+                }
 
-                "blob" -> requestBlobFromPage(url, fileName)
-                "data" -> saveDataUrlAsync(url, fileName, mimeType)
+                "blob" -> {
+                    if (projectSave) {
+                        requestProjectBlobFromPage(url, fileName)
+                    } else {
+                        requestBlobFromPage(url, fileName)
+                    }
+                }
+
+                "data" -> {
+                    if (projectSave) {
+                        showProjectFormatChoice(url, fileName, mimeType)
+                    } else {
+                        saveDataUrlAsync(url, fileName, mimeType)
+                    }
+                }
+
                 else -> showBanner(
                     "Не удалось скачать",
                     "Неподдерживаемый тип ссылки",
@@ -144,16 +179,62 @@ class DownloadController(
                 const bridge = window.$BRIDGE_NAME;
                 if (!bridge) return;
 
+                const normalizeLabel = value => String(value || '')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toLowerCase();
+
+                const clickedLabel = target => {
+                    let node = target;
+                    for (let i = 0; i < 6 && node; i++, node = node.parentElement) {
+                        if (!node.getAttribute) continue;
+                        const label = normalizeLabel(
+                            node.getAttribute('aria-label') ||
+                            node.getAttribute('title') ||
+                            node.textContent || ''
+                        );
+                        if (label && label.length <= 120) return label;
+                    }
+                    return '';
+                };
+
+                const isSaveToDevice = label => {
+                    const russian = label.includes('сохранить на устройство') &&
+                        !label.includes('сохранить на устройство как');
+                    const english = label.includes('save to device') &&
+                        !label.includes('save to device as');
+                    return russian || english;
+                };
+
+                document.addEventListener('click', event => {
+                    if (isSaveToDevice(clickedLabel(event.target))) {
+                        window.__bdengineNativeProjectSaveUntil = Date.now() + 5000;
+                        try { bridge.armProjectSave(); } catch (_) {}
+                    }
+                }, true);
+
+                const consumeProjectSave = () => {
+                    const until = Number(window.__bdengineNativeProjectSaveUntil || 0);
+                    const projectSave = until >= Date.now();
+                    if (projectSave) window.__bdengineNativeProjectSaveUntil = 0;
+                    return projectSave;
+                };
+
                 const transfer = (href, suggestedName) => {
                     if (!href || (!href.startsWith('blob:') && !href.startsWith('data:'))) {
                         return false;
                     }
 
                     const fileName = suggestedName || 'BDEngine-export';
+                    const projectSave = consumeProjectSave();
 
                     try {
                         if (href.startsWith('data:')) {
-                            bridge.saveDataUrl(href, fileName, '');
+                            if (projectSave) {
+                                bridge.saveProjectDataUrl(href, fileName, '');
+                            } else {
+                                bridge.saveDataUrl(href, fileName, '');
+                            }
                             return true;
                         }
 
@@ -162,11 +243,12 @@ class DownloadController(
                             .then(blob => {
                                 const reader = new FileReader();
                                 reader.onloadend = () => {
-                                    bridge.saveDataUrl(
-                                        String(reader.result || ''),
-                                        fileName,
-                                        blob.type || ''
-                                    );
+                                    const dataUrl = String(reader.result || '');
+                                    if (projectSave) {
+                                        bridge.saveProjectDataUrl(dataUrl, fileName, blob.type || '');
+                                    } else {
+                                        bridge.saveDataUrl(dataUrl, fileName, blob.type || '');
+                                    }
                                 };
                                 reader.onerror = () => bridge.reportError(fileName);
                                 reader.readAsDataURL(blob);
@@ -212,6 +294,9 @@ class DownloadController(
         activeBanner?.animate()?.cancel()
         activeBanner?.let(rootLayout::removeView)
         activeBanner = null
+        projectFormatDialog?.dismiss()
+        projectFormatDialog = null
+        projectSaveArmedUntilElapsed = 0L
 
         if (receiverRegistered) {
             try {
@@ -229,11 +314,59 @@ class DownloadController(
         ioExecutor.shutdownNow()
     }
 
+    private fun armProjectSave() {
+        projectSaveArmedUntilElapsed = SystemClock.elapsedRealtime() + PROJECT_SAVE_ARM_MS
+    }
+
+    private fun consumeProjectSaveArm(): Boolean {
+        val armedUntil = projectSaveArmedUntilElapsed
+        projectSaveArmedUntilElapsed = 0L
+        return armedUntil >= SystemClock.elapsedRealtime()
+    }
+
+    private fun clearProjectSaveArm() {
+        projectSaveArmedUntilElapsed = 0L
+    }
+
     private fun enqueueNetworkDownload(
         url: String,
         userAgent: String?,
         mimeType: String?,
         fileName: String
+    ) {
+        enqueueNetworkDownloadToFolder(
+            url = url,
+            userAgent = userAgent,
+            mimeType = mimeType,
+            fileName = fileName,
+            relativeFolder = DOWNLOAD_FOLDER,
+            projectSave = false
+        )
+    }
+
+    private fun enqueueProjectNetworkDownload(
+        url: String,
+        userAgent: String?,
+        mimeType: String?,
+        fileName: String
+    ) {
+        enqueueNetworkDownloadToFolder(
+            url = url,
+            userAgent = userAgent,
+            mimeType = mimeType,
+            fileName = fileName,
+            relativeFolder = SAVED_FOLDER,
+            projectSave = true
+        )
+    }
+
+    private fun enqueueNetworkDownloadToFolder(
+        url: String,
+        userAgent: String?,
+        mimeType: String?,
+        fileName: String,
+        relativeFolder: String,
+        projectSave: Boolean
     ) {
         if (!canWriteLegacyDownloads()) return
 
@@ -247,7 +380,7 @@ class DownloadController(
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
                 setDestinationInExternalPublicDir(
                     Environment.DIRECTORY_DOWNLOADS,
-                    "$DOWNLOAD_FOLDER/$fileName"
+                    "$relativeFolder/$fileName"
                 )
 
                 CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() }?.let {
@@ -260,15 +393,28 @@ class DownloadController(
 
             val id = downloadManager.enqueue(request)
             pendingDownloads[id] = fileName
-            showDownloadBanner()
+            if (projectSave) showProjectSaveBanner() else showDownloadBanner()
         } catch (_: Throwable) {
-            showBanner("Ошибка загрузки", fileName, isError = true)
+            showBanner(
+                if (projectSave) "Ошибка сохранения" else "Ошибка загрузки",
+                fileName,
+                isError = true
+            )
         }
     }
 
     private fun requestBlobFromPage(url: String, fileName: String) {
+        requestBlobFromPage(url, fileName, projectSave = false)
+    }
+
+    private fun requestProjectBlobFromPage(url: String, fileName: String) {
+        requestBlobFromPage(url, fileName, projectSave = true)
+    }
+
+    private fun requestBlobFromPage(url: String, fileName: String, projectSave: Boolean) {
         val quotedUrl = JSONObject.quote(url)
         val quotedName = JSONObject.quote(fileName)
+        val saveMethod = if (projectSave) "saveProjectDataUrl" else "saveDataUrl"
         val script = """
             (() => {
                 try {
@@ -276,7 +422,7 @@ class DownloadController(
                         .then(response => response.blob())
                         .then(blob => {
                             const reader = new FileReader();
-                            reader.onloadend = () => window.$BRIDGE_NAME.saveDataUrl(
+                            reader.onloadend = () => window.$BRIDGE_NAME.$saveMethod(
                                 String(reader.result || ''),
                                 $quotedName,
                                 blob.type || ''
@@ -304,10 +450,85 @@ class DownloadController(
                     ?: parsed.first.takeIf { it.isNotBlank() }
                     ?: "application/octet-stream"
                 val finalName = safeFileName(fileName, mime)
-                saveBytes(parsed.second, finalName, mime)
+                saveBytes(parsed.second, finalName, mime, DOWNLOAD_FOLDER)
                 // Do not replace the active five-second download banner on success.
             } catch (_: Throwable) {
                 showBanner("Ошибка загрузки", fileName, isError = true)
+            }
+        }
+    }
+
+    private fun showNetworkProjectFormatChoice(
+        url: String,
+        userAgent: String?,
+        mimeType: String?,
+        fileName: String
+    ) {
+        showProjectFormatChoice { extension ->
+            enqueueProjectNetworkDownload(
+                url = url,
+                userAgent = userAgent,
+                mimeType = mimeType,
+                fileName = forceProjectExtension(fileName, extension)
+            )
+        }
+    }
+
+    private fun showProjectFormatChoice(
+        dataUrl: String,
+        fileName: String,
+        mimeHint: String?
+    ) {
+        clearProjectSaveArm()
+        showProjectFormatChoice { extension ->
+            saveProjectDataUrlAsync(dataUrl, fileName, mimeHint, extension)
+        }
+    }
+
+    private fun showProjectFormatChoice(onFormatSelected: (String) -> Unit) {
+        activity.runOnUiThread {
+            if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+
+            projectFormatDialog?.dismiss()
+
+            val formats = arrayOf(".bdengine", ".bdstudio")
+            val dialog = AlertDialog.Builder(activity)
+                .setTitle("Сохранить как")
+                .setItems(formats) { _, which ->
+                    onFormatSelected(if (which == 1) "bdstudio" else "bdengine")
+                }
+                .setNegativeButton("Отмена", null)
+                .create()
+
+            projectFormatDialog = dialog
+            dialog.setOnDismissListener {
+                if (projectFormatDialog === dialog) projectFormatDialog = null
+            }
+            dialog.show()
+        }
+    }
+
+    private fun saveProjectDataUrlAsync(
+        dataUrl: String,
+        fileName: String,
+        mimeHint: String?,
+        extension: String
+    ) {
+        showProjectSaveBanner()
+
+        ioExecutor.execute {
+            try {
+                val parsed = decodeDataUrl(dataUrl)
+                val mime = mimeHint?.takeIf { it.isNotBlank() }
+                    ?: parsed.first.takeIf { it.isNotBlank() }
+                    ?: "application/octet-stream"
+                val finalName = forceProjectExtension(
+                    safeFileName(fileName, mime),
+                    extension
+                )
+                saveBytes(parsed.second, finalName, mime, SAVED_FOLDER)
+            } catch (_: Throwable) {
+                showBanner("Ошибка сохранения", fileName, isError = true)
             }
         }
     }
@@ -330,7 +551,12 @@ class DownloadController(
         return mimeType to bytes
     }
 
-    private fun saveBytes(bytes: ByteArray, fileName: String, mimeType: String) {
+    private fun saveBytes(
+        bytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+        relativeFolder: String
+    ) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = activity.contentResolver
             val values = ContentValues().apply {
@@ -338,7 +564,7 @@ class DownloadController(
                 put(MediaStore.Downloads.MIME_TYPE, mimeType)
                 put(
                     MediaStore.Downloads.RELATIVE_PATH,
-                    "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOAD_FOLDER"
+                    "${Environment.DIRECTORY_DOWNLOADS}/$relativeFolder"
                 )
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
@@ -366,7 +592,7 @@ class DownloadController(
 
         @Suppress("DEPRECATION")
         val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val directory = File(downloads, DOWNLOAD_FOLDER)
+        val directory = File(downloads, relativeFolder)
         if (!directory.exists() && !directory.mkdirs()) {
             error("Cannot create downloads folder")
         }
@@ -416,6 +642,14 @@ class DownloadController(
         return candidate
     }
 
+    private fun forceProjectExtension(fileName: String, extension: String): String {
+        val safeExtension = if (extension == "bdstudio") "bdstudio" else "bdengine"
+        val dot = fileName.lastIndexOf('.')
+        val base = if (dot > 0) fileName.substring(0, dot) else fileName
+        val safeBase = base.ifBlank { "BDEngine-project" }
+        return "$safeBase.$safeExtension"
+    }
+
     private fun safeFileName(name: String?, mimeType: String?): String {
         var result = name.orEmpty()
             .substringAfterLast('/')
@@ -440,6 +674,14 @@ class DownloadController(
         showBanner(
             title = "Идет загрузка...",
             subtitle = DISPLAY_DOWNLOAD_PATH,
+            isError = false
+        )
+    }
+
+    private fun showProjectSaveBanner() {
+        showBanner(
+            title = "Идет сохранение...",
+            subtitle = DISPLAY_SAVED_PATH,
             isError = false
         )
     }
@@ -624,12 +866,31 @@ class DownloadController(
 
     private inner class DownloadBridge {
         @JavascriptInterface
+        fun armProjectSave() {
+            this@DownloadController.armProjectSave()
+        }
+
+        @JavascriptInterface
         fun saveDataUrl(dataUrl: String?, fileName: String?, mimeType: String?) {
             if (dataUrl.isNullOrBlank()) {
                 reportError(fileName ?: "BDEngine-export")
                 return
             }
             saveDataUrlAsync(
+                dataUrl = dataUrl,
+                fileName = safeFileName(fileName, mimeType),
+                mimeHint = mimeType
+            )
+        }
+
+        @JavascriptInterface
+        fun saveProjectDataUrl(dataUrl: String?, fileName: String?, mimeType: String?) {
+            clearProjectSaveArm()
+            if (dataUrl.isNullOrBlank()) {
+                reportError(fileName ?: "BDEngine-project")
+                return
+            }
+            showProjectFormatChoice(
                 dataUrl = dataUrl,
                 fileName = safeFileName(fileName, mimeType),
                 mimeHint = mimeType
