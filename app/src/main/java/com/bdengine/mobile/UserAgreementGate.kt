@@ -144,6 +144,7 @@ private object UserAgreementGate {
         val host = activity.findViewById<FrameLayout>(android.R.id.content) ?: return
         if (active.containsKey(activity)) return
 
+        val strings = AppLocale.strings(activity)
         var detailsOverlay: FrameLayout? = null
         var backCallback: OnBackPressedCallback? = null
 
@@ -166,18 +167,15 @@ private object UserAgreementGate {
         }
 
         val title = TextView(activity).apply {
-            text = "Пользовательское соглашение"
+            text = strings.agreementTitle
             textSize = 19f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             includeFontPadding = false
         }
 
-        val introText =
-            "BDEngine Mobile — неофициальное приложение и не связано с разработчиками " +
-                "BDEngine / Block Display. Для продолжения необходимо ознакомиться и принять " +
-                "Пользовательское соглашение."
-        val linkText = "Пользовательское соглашение"
+        val introText = strings.agreementIntro
+        val linkText = strings.agreementLink
         val linkStart = introText.lastIndexOf(linkText)
         val intro = SpannableString(introText).apply {
             if (linkStart >= 0) {
@@ -222,7 +220,7 @@ private object UserAgreementGate {
         }
 
         val checkBox = CheckBox(activity).apply {
-            text = "Я ознакомился(ась) и принимаю условия"
+            text = strings.agreementCheck
             textSize = 13.5f
             setTextColor(Color.rgb(225, 228, 235))
             buttonTintList = ColorStateList(
@@ -239,7 +237,7 @@ private object UserAgreementGate {
         }
 
         val acceptButton = TextView(activity).apply {
-            text = "ОК"
+            text = strings.agreementOk
             textSize = 14f
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
@@ -358,6 +356,7 @@ private object UserAgreementGate {
         parentOverlay: FrameLayout,
         onClosed: () -> Unit
     ): FrameLayout {
+        val strings = AppLocale.strings(activity)
         val overlay = FrameLayout(activity).apply {
             setBackgroundColor(Color.argb(218, 0, 0, 0))
             isClickable = true
@@ -372,7 +371,7 @@ private object UserAgreementGate {
         }
 
         val title = TextView(activity).apply {
-            text = "Пользовательское соглашение"
+            text = strings.agreementTitle
             textSize = 18f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
@@ -380,7 +379,7 @@ private object UserAgreementGate {
         }
 
         val agreementText = TextView(activity).apply {
-            text = FULL_AGREEMENT
+            text = strings.agreementFull
             textSize = 12.8f
             setTextColor(Color.rgb(205, 210, 220))
             setLineSpacing(0f, 1.14f)
@@ -403,7 +402,7 @@ private object UserAgreementGate {
         }
 
         val closeButton = TextView(activity).apply {
-            text = "Закрыть"
+            text = strings.agreementClose
             textSize = 14f
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
@@ -515,57 +514,4 @@ private object UserAgreementGate {
     private fun dp(context: Context, value: Int): Int {
         return (value * context.resources.displayMetrics.density).roundToInt()
     }
-
-    private const val FULL_AGREEMENT = """
-Пользовательское соглашение BDEngine Mobile
-Дата вступления в силу: 27 августа 2026 г.
-
-Настоящее Пользовательское соглашение регулирует использование приложения BDEngine Mobile (далее — «Приложение»). Устанавливая, запуская или используя Приложение, пользователь подтверждает, что ознакомился с настоящим Соглашением и принимает его условия.
-
-1. Назначение приложения
-BDEngine Mobile является неофициальным мобильным лаунчером/оболочкой, предназначенным для доступа к веб-редактору BDEngine с устройств Android.
-
-Приложение не является официальным продуктом BDEngine или Block Display, не разрабатывается ими и не имеет официального одобрения или поддержки со стороны их владельцев.
-
-Все права на BDEngine, Block Display, их интерфейс, логотипы, материалы и веб-сервисы принадлежат соответствующим правообладателям.
-
-2. Работа стороннего сервиса
-Основная функциональность BDEngine предоставляется сторонним веб-сервисом. Разработчик BDEngine Mobile не контролирует доступность серверов BDEngine, работу учётных записей, облачных проектов, авторизации и других функций стороннего сервиса.
-
-Изменения на стороне BDEngine могут привести к временной или постоянной неработоспособности отдельных функций Приложения.
-
-3. Файлы и проекты
-Приложение может предоставлять функции открытия, загрузки и сохранения файлов проектов на устройство.
-
-Пользователь самостоятельно несёт ответственность за сохранность своих проектов. Рекомендуется регулярно создавать резервные копии важных файлов.
-
-Разработчик не гарантирует возможность восстановления проекта в случае повреждения, удаления, несовместимости файла или сбоя стороннего сервиса.
-
-4. Данные и авторизация
-Для сохранения авторизации и состояния веб-сайта Приложение может локально хранить cookies, данные WebView и другую информацию сессии на устройстве пользователя.
-
-Данные, которые пользователь вводит непосредственно на сайтах BDEngine или Block Display, могут обрабатываться соответствующими сторонними сервисами согласно их собственным правилам и политике конфиденциальности.
-
-5. Ограничение ответственности
-Приложение предоставляется «как есть».
-
-Разработчик не гарантирует отсутствие ошибок, постоянную доступность сервиса, полную совместимость со всеми устройствами или бесперебойную работу сторонних функций.
-
-В пределах, допускаемых применимым законодательством, разработчик не несёт ответственности за потерю проектов, файлов или данных, сбои сторонних серверов, блокировку или потерю учётной записи, несовместимость после обновления BDEngine, а также косвенные убытки, возникшие в результате использования Приложения.
-
-6. Допустимое использование
-Пользователь обязуется не использовать Приложение для нарушения законодательства, получения несанкционированного доступа к чужим аккаунтам или данным, вмешательства в работу BDEngine или других сервисов, распространения вредоносного программного обеспечения либо иных противоправных действий.
-
-7. Обновления
-Приложение может обновляться без предварительного уведомления для исправления ошибок, обеспечения совместимости с BDEngine, повышения безопасности или добавления новых функций. Функциональность Приложения может изменяться между версиями.
-
-8. Прекращение использования
-Пользователь может прекратить действие настоящего Соглашения в любое время, удалив Приложение со своего устройства. Разработчик вправе прекратить разработку или распространение BDEngine Mobile.
-
-9. Изменение соглашения
-Настоящее Соглашение может обновляться вместе с новыми версиями Приложения. Если условия существенно изменятся, Приложение может повторно запросить согласие пользователя.
-
-10. Согласие
-Устанавливая отметку о принятии условий и нажимая «ОК», пользователь подтверждает, что ознакомился с настоящим Пользовательским соглашением и принимает его условия.
-    """
 }
