@@ -24,6 +24,8 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
@@ -90,6 +92,11 @@ class MainActivity : AppCompatActivity() {
         private const val SETTINGS_BUTTON_SIZE_DP = 40
         private const val SPLASH_DURATION_MS = 3000L
         private const val USAGE_CHECKPOINT_MS = 30_000L
+
+        private const val LANGUAGE_MENU_GROUP = 7400
+        private const val LANGUAGE_MENU_SYSTEM = 7401
+        private const val LANGUAGE_MENU_RUSSIAN = 7402
+        private const val LANGUAGE_MENU_ENGLISH = 7403
 
         private const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
@@ -476,10 +483,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun createFloatingSettings() {
         val strings = AppLocale.strings(this)
+        val accent = Color.rgb(105, 214, 210)
 
         settingsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(14))
             visibility = View.GONE
             elevation = dp(14).toFloat()
             background = roundedBackground(
@@ -487,6 +494,39 @@ class MainActivity : AppCompatActivity() {
                 radius = dp(16).toFloat(),
                 strokeColor = Color.argb(48, 255, 255, 255),
                 strokeWidth = dp(1)
+            )
+        }
+
+        val settingsContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+        }
+
+        val settingsScroll = object : ScrollView(this) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                val screenHeight = if (rootLayout.height > 0) {
+                    rootLayout.height
+                } else {
+                    resources.displayMetrics.heightPixels
+                }
+                val availableHeight = (screenHeight - dp(24)).coerceAtLeast(dp(180))
+                val maxHeight = minOf(dp(340), availableHeight)
+                val cappedHeightSpec = View.MeasureSpec.makeMeasureSpec(
+                    maxHeight,
+                    View.MeasureSpec.AT_MOST
+                )
+                super.onMeasure(widthMeasureSpec, cappedHeightSpec)
+            }
+        }.apply {
+            isFillViewport = false
+            isVerticalScrollBarEnabled = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            addView(
+                settingsContent,
+                ScrollView.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
             )
         }
 
@@ -511,7 +551,7 @@ class MainActivity : AppCompatActivity() {
 
         scaleValue = TextView(this).apply {
             textSize = 13.5f
-            setTextColor(Color.rgb(105, 214, 210))
+            setTextColor(accent)
             gravity = Gravity.END
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
@@ -525,7 +565,7 @@ class MainActivity : AppCompatActivity() {
         val seekBar = SeekBar(this).apply {
             max = 100
             progress = scalePercent
-            progressTintList = ColorStateList.valueOf(Color.rgb(105, 214, 210))
+            progressTintList = ColorStateList.valueOf(accent)
             thumbTintList = ColorStateList.valueOf(Color.rgb(220, 250, 248))
             setPadding(0, dp(3), 0, 0)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -551,7 +591,47 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
-        val divider = View(this).apply {
+        val firstDivider = View(this).apply {
+            setBackgroundColor(Color.argb(32, 255, 255, 255))
+        }
+
+        val languageRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(9), 0, dp(9))
+        }
+
+        val languageLabel = TextView(this).apply {
+            text = strings.language
+            textSize = 13.5f
+            setTextColor(Color.rgb(215, 219, 228))
+        }
+
+        val configureLanguageButton = TextView(this).apply {
+            text = strings.configure
+            textSize = 12.5f
+            gravity = Gravity.CENTER
+            setTextColor(accent)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            isClickable = true
+            isFocusable = true
+            background = roundedBackground(
+                fillColor = Color.argb(215, 15, 18, 22),
+                radius = dp(8).toFloat(),
+                strokeColor = Color.argb(130, 105, 214, 210),
+                strokeWidth = dp(1)
+            )
+            setOnClickListener { showLanguageMenu(this) }
+        }
+
+        languageRow.addView(
+            languageLabel,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        languageRow.addView(configureLanguageButton)
+
+        val secondDivider = View(this).apply {
             setBackgroundColor(Color.argb(32, 255, 255, 255))
         }
 
@@ -580,17 +660,17 @@ class MainActivity : AppCompatActivity() {
         )
         usageRow.addView(usageValue)
 
-        settingsPanel.addView(heading)
-        settingsPanel.addView(
+        settingsContent.addView(heading)
+        settingsContent.addView(
             scaleRow,
             LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
         )
-        settingsPanel.addView(
+        settingsContent.addView(
             seekBar,
             LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
         )
-        settingsPanel.addView(
-            divider,
+        settingsContent.addView(
+            firstDivider,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(1)
@@ -598,9 +678,28 @@ class MainActivity : AppCompatActivity() {
                 topMargin = dp(7)
             }
         )
-        settingsPanel.addView(
+        settingsContent.addView(
+            languageRow,
+            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
+        settingsContent.addView(
+            secondDivider,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(1)
+            )
+        )
+        settingsContent.addView(
             usageRow,
             LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
+
+        settingsPanel.addView(
+            settingsScroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
         )
 
         updateScaleValue()
@@ -635,6 +734,56 @@ class MainActivity : AppCompatActivity() {
         )
 
         enableGearDragging()
+    }
+
+    private fun showLanguageMenu(anchor: View) {
+        val strings = AppLocale.strings(this)
+        val selectedMode = AppLocale.selectedLanguageMode(this)
+
+        PopupMenu(this, anchor).apply {
+            menu.add(
+                LANGUAGE_MENU_GROUP,
+                LANGUAGE_MENU_SYSTEM,
+                0,
+                strings.systemDefault
+            )
+            menu.add(
+                LANGUAGE_MENU_GROUP,
+                LANGUAGE_MENU_RUSSIAN,
+                1,
+                "Русский"
+            )
+            menu.add(
+                LANGUAGE_MENU_GROUP,
+                LANGUAGE_MENU_ENGLISH,
+                2,
+                "English"
+            )
+            menu.setGroupCheckable(LANGUAGE_MENU_GROUP, true, true)
+
+            when (selectedMode) {
+                AppLocale.MODE_RUSSIAN -> menu.findItem(LANGUAGE_MENU_RUSSIAN)?.isChecked = true
+                AppLocale.MODE_ENGLISH -> menu.findItem(LANGUAGE_MENU_ENGLISH)?.isChecked = true
+                else -> menu.findItem(LANGUAGE_MENU_SYSTEM)?.isChecked = true
+            }
+
+            setOnMenuItemClickListener { item ->
+                val newMode = when (item.itemId) {
+                    LANGUAGE_MENU_RUSSIAN -> AppLocale.MODE_RUSSIAN
+                    LANGUAGE_MENU_ENGLISH -> AppLocale.MODE_ENGLISH
+                    else -> AppLocale.MODE_SYSTEM
+                }
+
+                if (newMode != selectedMode) {
+                    usageTracker.checkpoint()
+                    saveScalePercent()
+                    saveGearPosition()
+                    AppLocale.setLanguageMode(this@MainActivity, newMode)
+                    recreate()
+                }
+                true
+            }
+        }.show()
     }
 
     @SuppressLint("ClickableViewAccessibility")

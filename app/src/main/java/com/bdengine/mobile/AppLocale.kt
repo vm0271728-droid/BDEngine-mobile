@@ -6,6 +6,9 @@ internal data class AppStrings(
     val settings: String,
     val scale: String,
     val timeInApp: String,
+    val language: String,
+    val configure: String,
+    val systemDefault: String,
     val splashRecent: String,
     val splashHour: String,
     val splashDay: String,
@@ -33,8 +36,36 @@ internal data class AppStrings(
 
 internal object AppLocale {
 
+    const val MODE_SYSTEM = "system"
+    const val MODE_RUSSIAN = "ru"
+    const val MODE_ENGLISH = "en"
+
+    private const val PREFS_NAME = "bdengine_mobile_settings"
+    private const val PREF_LANGUAGE_MODE = "language_mode_v1"
+
+    fun selectedLanguageMode(context: Context): String {
+        return context
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(PREF_LANGUAGE_MODE, MODE_SYSTEM)
+            .let(::normalizeMode)
+    }
+
+    fun setLanguageMode(context: Context, mode: String) {
+        context
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(PREF_LANGUAGE_MODE, normalizeMode(mode))
+            .apply()
+    }
+
     fun isRussian(context: Context): Boolean {
-        return context.resources.configuration.locales[0].language.equals("ru", ignoreCase = true)
+        return when (selectedLanguageMode(context)) {
+            MODE_RUSSIAN -> true
+            MODE_ENGLISH -> false
+            else -> context.resources.configuration.locales[0]
+                .language
+                .equals("ru", ignoreCase = true)
+        }
     }
 
     fun strings(context: Context): AppStrings = if (isRussian(context)) RUSSIAN else ENGLISH
@@ -79,6 +110,14 @@ internal object AppLocale {
         }
     }
 
+    private fun normalizeMode(mode: String?): String {
+        return when (mode) {
+            MODE_RUSSIAN -> MODE_RUSSIAN
+            MODE_ENGLISH -> MODE_ENGLISH
+            else -> MODE_SYSTEM
+        }
+    }
+
     private fun englishUnit(value: Long, singular: String, plural: String): String {
         return if (value == 1L) singular else plural
     }
@@ -114,6 +153,9 @@ internal object AppLocale {
         settings = "Настройки",
         scale = "Масштаб",
         timeInApp = "В приложении",
+        language = "Язык",
+        configure = "Настроить",
+        systemDefault = "Системный",
         splashRecent = "Это приложение не официально, просто открывает страницу.",
         splashHour = "Продолжаем работу.",
         splashDay = "Где ты пропадаешь, бегом за работу!!!",
@@ -194,6 +236,9 @@ BDEngine Mobile является неофициальным мобильным �
         settings = "Settings",
         scale = "Scale",
         timeInApp = "Time in app",
+        language = "Language",
+        configure = "Configure",
+        systemDefault = "System default",
         splashRecent = "This app is unofficial and simply opens the web page.",
         splashHour = "Let's keep working.",
         splashDay = "Where have you been? Back to work!!!",
