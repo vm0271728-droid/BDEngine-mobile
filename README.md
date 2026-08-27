@@ -15,6 +15,10 @@ Unofficial Android wrapper for the BDEngine web editor.
 
 Official editor: https://block-display.com/editor
 
+## Releases
+
+Download the latest APK: https://github.com/vm0271728-droid/BDEngine-mobile/releases
+
 ## Status
 
 Early MVP. File upload/download flows, external authentication windows, compatibility testing and release APK automation still need to be completed.
