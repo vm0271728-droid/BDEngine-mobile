@@ -91,11 +91,6 @@ class MainActivity : AppCompatActivity() {
         private const val SPLASH_DURATION_MS = 3000L
         private const val USAGE_CHECKPOINT_MS = 30_000L
 
-        private const val MINUTE_MS = 60_000L
-        private const val DAY_MS = 24L * 60L * MINUTE_MS
-        private const val MONTH_DAYS = 30L
-        private const val YEAR_DAYS = 365L
-
         private const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
@@ -480,6 +475,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun createFloatingSettings() {
+        val strings = AppLocale.strings(this)
+
         settingsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(14), dp(16), dp(14))
@@ -494,7 +491,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val heading = TextView(this).apply {
-            text = "Настройки"
+            text = strings.settings
             textSize = 16f
             setTextColor(Color.WHITE)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
@@ -507,7 +504,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val scaleLabel = TextView(this).apply {
-            text = "Масштаб"
+            text = strings.scale
             textSize = 13.5f
             setTextColor(Color.rgb(215, 219, 228))
         }
@@ -565,7 +562,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val usageLabel = TextView(this).apply {
-            text = "В приложении"
+            text = strings.timeInApp
             textSize = 13.5f
             setTextColor(Color.rgb(215, 219, 228))
         }
@@ -809,58 +806,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateUsageValue() {
         if (!::usageValue.isInitialized || !::usageTracker.isInitialized) return
-        usageValue.text = formatUsageDuration(usageTracker.totalUsageMsNow())
-    }
-
-    private fun formatUsageDuration(milliseconds: Long): String {
-        val safeMs = milliseconds.coerceAtLeast(0L)
-        val totalMinutes = safeMs / MINUTE_MS
-
-        if (totalMinutes < 60L) {
-            return "$totalMinutes мин"
-        }
-
-        // From one hour onward the display intentionally becomes coarse.
-        val totalDays = (safeMs / DAY_MS).coerceAtLeast(1L)
-
-        if (totalDays < MONTH_DAYS) {
-            return "$totalDays ${russianDays(totalDays)}"
-        }
-
-        if (totalDays < YEAR_DAYS) {
-            val months = totalDays / MONTH_DAYS
-            val days = totalDays % MONTH_DAYS
-            return "$months мес $days ${russianDays(days)}"
-        }
-
-        val years = totalDays / YEAR_DAYS
-        val daysAfterYears = totalDays % YEAR_DAYS
-        val months = daysAfterYears / MONTH_DAYS
-        val days = daysAfterYears % MONTH_DAYS
-
-        return "$years ${russianYears(years)} $months мес $days ${russianDays(days)}"
-    }
-
-    private fun russianDays(value: Long): String {
-        val mod100 = value % 100
-        val mod10 = value % 10
-        return when {
-            mod100 in 11..14 -> "дней"
-            mod10 == 1L -> "день"
-            mod10 in 2..4 -> "дня"
-            else -> "дней"
-        }
-    }
-
-    private fun russianYears(value: Long): String {
-        val mod100 = value % 100
-        val mod10 = value % 10
-        return when {
-            mod100 in 11..14 -> "лет"
-            mod10 == 1L -> "год"
-            mod10 in 2..4 -> "года"
-            else -> "лет"
-        }
+        usageValue.text = AppLocale.formatUsageDuration(this, usageTracker.totalUsageMsNow())
     }
 
     private fun saveScalePercent() {
