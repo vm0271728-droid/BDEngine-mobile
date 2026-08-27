@@ -268,44 +268,66 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
                 if (window.__bdengineFixedBodyScrollInstalled) return;
                 window.__bdengineFixedBodyScrollInstalled = true;
 
-                const install = () => {
+                const STYLE_ID = '__bdengineFixedBodyScrollStyle';
+
+                const installStyle = () => {
                     try {
-                        const html = document.documentElement;
-                        const body = document.body;
-                        if (!html || !body) return;
+                        if (document.getElementById(STYLE_ID)) return;
 
-                        // Keep the browser/root viewport physically pinned. The body is
-                        // the only vertical scrolling surface, so the whole page cannot
-                        // drift upward while the user can still scroll through content.
-                        html.style.setProperty('height', '100%', 'important');
-                        html.style.setProperty('overflow', 'hidden', 'important');
-                        html.style.setProperty('overscroll-behavior', 'none', 'important');
+                        const style = document.createElement('style');
+                        style.id = STYLE_ID;
+                        style.textContent = `
+                            html {
+                                width: 100% !important;
+                                height: 100% !important;
+                                overflow: hidden !important;
+                                overscroll-behavior: none !important;
+                            }
 
-                        body.style.setProperty('height', '100%', 'important');
-                        body.style.setProperty('max-height', '100%', 'important');
-                        body.style.setProperty('overflow-x', 'hidden', 'important');
-                        body.style.setProperty('overflow-y', 'auto', 'important');
-                        body.style.setProperty('overscroll-behavior-x', 'none', 'important');
-                        body.style.setProperty('overscroll-behavior-y', 'contain', 'important');
-                        body.style.setProperty('-webkit-overflow-scrolling', 'touch', 'important');
+                            body {
+                                position: fixed !important;
+                                top: 0 !important;
+                                right: 0 !important;
+                                bottom: 0 !important;
+                                left: 0 !important;
+                                width: auto !important;
+                                height: auto !important;
+                                min-height: 0 !important;
+                                max-height: none !important;
+                                box-sizing: border-box !important;
+                                overflow-x: hidden !important;
+                                overflow-y: auto !important;
+                                overscroll-behavior-x: none !important;
+                                overscroll-behavior-y: contain !important;
+                                -webkit-overflow-scrolling: touch !important;
+                            }
+                        `;
 
+                        (document.head || document.documentElement).appendChild(style);
+                    } catch (_) {}
+                };
+
+                const pinOuterViewport = () => {
+                    try {
                         if (window.scrollX !== 0 || window.scrollY !== 0) {
                             window.scrollTo(0, 0);
                         }
                     } catch (_) {}
                 };
 
-                install();
+                installStyle();
+                pinOuterViewport();
+
                 if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', install, { once: true });
+                    document.addEventListener('DOMContentLoaded', () => {
+                        installStyle();
+                        pinOuterViewport();
+                    }, { once: true });
                 }
 
-                // This listener only pins the outer window. It never changes body.scrollTop.
-                window.addEventListener('scroll', () => {
-                    if (window.scrollX !== 0 || window.scrollY !== 0) {
-                        window.scrollTo(0, 0);
-                    }
-                }, { passive: true });
+                // The fixed body is the scroll container. This listener only corrects
+                // accidental scrolling of the outer document and never changes body.scrollTop.
+                window.addEventListener('scroll', pinOuterViewport, { passive: true });
             })();
         """.trimIndent()
 
