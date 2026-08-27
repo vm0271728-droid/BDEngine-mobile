@@ -62,6 +62,8 @@ class DownloadController(
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bridge = DownloadBridge()
+    private val strings: AppStrings
+        get() = AppLocale.strings(activity)
 
     private var receiverRegistered = false
     private var activeBanner: View? = null
@@ -87,13 +89,13 @@ class DownloadController(
                     val status = if (statusIndex >= 0) cursor.getInt(statusIndex) else -1
 
                     // A successful completion must not replace the five-second
-                    // "Идет загрузка..." banner before its timer has finished.
+                    // download banner before its timer has finished.
                     if (status != DownloadManager.STATUS_SUCCESSFUL) {
-                        showBanner("Ошибка загрузки", fileName, isError = true)
+                        showBanner(strings.downloadError, fileName, isError = true)
                     }
                 }
             } catch (_: Throwable) {
-                showBanner("Ошибка загрузки", fileName, isError = true)
+                showBanner(strings.downloadError, fileName, isError = true)
             }
         }
     }
@@ -145,8 +147,8 @@ class DownloadController(
                 }
 
                 else -> showBanner(
-                    "Не удалось скачать",
-                    "Неподдерживаемый тип ссылки",
+                    strings.downloadFailed,
+                    strings.unsupportedLink,
                     isError = true
                 )
             }
@@ -396,7 +398,7 @@ class DownloadController(
             if (projectSave) showProjectSaveBanner() else showDownloadBanner()
         } catch (_: Throwable) {
             showBanner(
-                if (projectSave) "Ошибка сохранения" else "Ошибка загрузки",
+                if (projectSave) strings.saveError else strings.downloadError,
                 fileName,
                 isError = true
             )
@@ -453,7 +455,7 @@ class DownloadController(
                 saveBytes(parsed.second, finalName, mime, DOWNLOAD_FOLDER)
                 // Do not replace the active five-second download banner on success.
             } catch (_: Throwable) {
-                showBanner("Ошибка загрузки", fileName, isError = true)
+                showBanner(strings.downloadError, fileName, isError = true)
             }
         }
     }
@@ -493,11 +495,11 @@ class DownloadController(
 
             val formats = arrayOf(".bdengine", ".bdstudio")
             val dialog = AlertDialog.Builder(activity)
-                .setTitle("Сохранить как")
+                .setTitle(strings.saveAs)
                 .setItems(formats) { _, which ->
                     onFormatSelected(if (which == 1) "bdstudio" else "bdengine")
                 }
-                .setNegativeButton("Отмена", null)
+                .setNegativeButton(strings.cancel, null)
                 .create()
 
             projectFormatDialog = dialog
@@ -528,7 +530,7 @@ class DownloadController(
                 )
                 saveBytes(parsed.second, finalName, mime, SAVED_FOLDER)
             } catch (_: Throwable) {
-                showBanner("Ошибка сохранения", fileName, isError = true)
+                showBanner(strings.saveError, fileName, isError = true)
             }
         }
     }
@@ -619,8 +621,8 @@ class DownloadController(
             STORAGE_PERMISSION_REQUEST
         )
         showBanner(
-            "Нужно разрешение",
-            "Разреши доступ к файлам и повтори загрузку",
+            strings.permissionRequired,
+            strings.permissionMessage,
             isError = true
         )
         return false
@@ -672,7 +674,7 @@ class DownloadController(
 
     private fun showDownloadBanner() {
         showBanner(
-            title = "Идет загрузка...",
+            title = strings.downloading,
             subtitle = DISPLAY_DOWNLOAD_PATH,
             isError = false
         )
@@ -680,7 +682,7 @@ class DownloadController(
 
     private fun showProjectSaveBanner() {
         showBanner(
-            title = "Идет сохранение...",
+            title = strings.saving,
             subtitle = DISPLAY_SAVED_PATH,
             isError = false
         )
@@ -900,7 +902,7 @@ class DownloadController(
         @JavascriptInterface
         fun reportError(fileName: String?) {
             showBanner(
-                "Ошибка загрузки",
+                strings.downloadError,
                 fileName?.takeIf { it.isNotBlank() } ?: "BDEngine-export",
                 isError = true
             )
