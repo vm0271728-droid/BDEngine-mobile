@@ -161,6 +161,8 @@ class MainActivity : AppCompatActivity() {
                     const href = anchor.href || anchor.getAttribute('href') || '';
                     if (!isGoogleLogin(href)) return;
 
+                    // Force same-WebView navigation so Android can intercept it and
+                    // hand the whole OAuth flow to a trusted external browser.
                     event.preventDefault();
                     event.stopImmediatePropagation();
                     window.location.assign(href);
@@ -330,10 +332,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         webView.setOnScrollChangeListener { _, scrollX, scrollY, _, _ ->
-            val url = webView.url
-            if ((isEditorUrl(url) || isBlockDisplayUrl(url)) && (scrollX != 0 || scrollY != 0)) {
-                // BDEngine's pages use their own internal scroll surfaces. Keep the
-                // Android WebView viewport itself pinned so the scaled view cannot drift.
+            if (isEditorUrl(webView.url) && (scrollX != 0 || scrollY != 0)) {
                 webView.scrollTo(0, 0)
             }
         }
@@ -358,7 +357,6 @@ class MainActivity : AppCompatActivity() {
                     view?.scrollTo(0, 0)
                 } else {
                     view?.evaluateJavascript(HIDE_SIGNUP_BANNER_SCRIPT, null)
-                    if (isBlockDisplayUrl(url)) view?.scrollTo(0, 0)
                 }
 
                 CookieManager.getInstance().flush()
@@ -832,7 +830,7 @@ class MainActivity : AppCompatActivity() {
             webView.translationX = 0f
             webView.translationY = 0f
             webView.requestLayout()
-            if (isEditorUrl(webView.url) || isBlockDisplayUrl(webView.url)) webView.scrollTo(0, 0)
+            if (isEditorUrl(webView.url)) webView.scrollTo(0, 0)
         }
     }
 
@@ -925,16 +923,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun isBlockDisplayUrl(url: String?): Boolean {
-        if (url.isNullOrBlank()) return false
-        return try {
-            val host = Uri.parse(url).host.orEmpty().lowercase()
-            host == "block-display.com" || host == "www.block-display.com"
-        } catch (_: Throwable) {
-            false
-        }
-    }
-
     private fun isEditorUrl(url: String?): Boolean {
         if (url.isNullOrBlank()) return false
         return try {
@@ -962,7 +950,7 @@ class MainActivity : AppCompatActivity() {
         mainHandler.postDelayed(usageCheckpoint, USAGE_CHECKPOINT_MS)
         rootLayout.post {
             applySmallestWidthScale(scalePercent)
-            if (isEditorUrl(webView.url) || isBlockDisplayUrl(webView.url)) webView.scrollTo(0, 0)
+            if (isEditorUrl(webView.url)) webView.scrollTo(0, 0)
         }
     }
 

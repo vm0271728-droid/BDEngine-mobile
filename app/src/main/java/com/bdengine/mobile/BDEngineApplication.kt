@@ -354,17 +354,23 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
 
             val rootLayout = findRootFrameLayout(webView) ?: return@post
 
+            // Chromium decides the exact CPU thread allocation itself. These are the
+            // strongest public Android controls available to keep its renderer fast.
             webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
             }
 
+            // BDEngine's "Открыть с устройства" is a standard web file chooser.
+            // Route it through Android's Storage Access Framework instead of leaving
+            // the WebView with the default no-op WebChromeClient.
             webView.webChromeClient = BDEngineWebChromeClient(activity)
 
             val controller = DownloadController(activity, rootLayout, webView)
             controller.attach()
             downloadControllers[activity] = controller
 
+            // Current document.
             controller.installPageBridge()
             installFileSystemSaveShim(webView)
             installMainPageFixedScroll(webView)
@@ -374,10 +380,25 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
                 installMainPageFixedScroll(webView)
             }, 500L)
 
+            // Every later BDEngine navigation, including the editor domain.
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                WebViewCompat.addDocumentStartJavaScript(webView, DOWNLOAD_BRIDGE_SCRIPT, TRUSTED_ORIGINS)
-                WebViewCompat.addDocumentStartJavaScript(webView, FILE_SYSTEM_SAVE_SHIM_SCRIPT, TRUSTED_ORIGINS)
-                WebViewCompat.addDocumentStartJavaScript(webView, MAIN_PAGE_FIXED_SCROLL_SCRIPT, BLOCK_DISPLAY_ORIGINS)
+                WebViewCompat.addDocumentStartJavaScript(
+                    webView,
+                    DOWNLOAD_BRIDGE_SCRIPT,
+                    TRUSTED_ORIGINS
+                )
+
+                WebViewCompat.addDocumentStartJavaScript(
+                    webView,
+                    FILE_SYSTEM_SAVE_SHIM_SCRIPT,
+                    TRUSTED_ORIGINS
+                )
+
+                WebViewCompat.addDocumentStartJavaScript(
+                    webView,
+                    MAIN_PAGE_FIXED_SCROLL_SCRIPT,
+                    BLOCK_DISPLAY_ORIGINS
+                )
             }
         }
     }
