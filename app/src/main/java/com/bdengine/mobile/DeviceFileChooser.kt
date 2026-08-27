@@ -18,11 +18,14 @@ class BDEngineWebChromeClient(
         fileChooserParams: FileChooserParams?
     ): Boolean {
         val callback = filePathCallback ?: return false
+        val acceptTypes = fileChooserParams?.acceptTypes?.let { types ->
+            Array(types.size) { index -> types[index].orEmpty() }
+        } ?: emptyArray()
 
         DeviceFilePickerBridge.open(
             activity = activity,
             callback = callback,
-            acceptTypes = fileChooserParams?.acceptTypes.orEmpty(),
+            acceptTypes = acceptTypes,
             allowMultiple = fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE
         )
         return true
