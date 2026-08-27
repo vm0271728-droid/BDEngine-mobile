@@ -18,12 +18,6 @@ class AppUsageTracker(private val context: Context) {
         private const val DAY_MS = 24L * HOUR_MS
         private const val WEEK_MS = 7L * DAY_MS
         private const val MONTH_31_MS = 31L * DAY_MS
-
-        const val FIRST_OR_RECENT_TEXT = "Это приложение не официально, просто открывает страницу."
-        const val ONE_HOUR_TEXT = "Продолжаем работу."
-        const val ONE_DAY_TEXT = "Где ты пропадаешь, бегом за работу!!!"
-        const val ONE_WEEK_TEXT = "Тебя долго не было..."
-        const val ONE_MONTH_TEXT = "Я думал ты меня бросил... Тебя не было слишком долго..."
     }
 
     private val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -32,14 +26,15 @@ class AppUsageTracker(private val context: Context) {
     private var sessionStartedElapsedMs: Long? = null
 
     fun loadingTextForEntry(): String {
-        val awayMs = timeSinceLastExitMs() ?: return FIRST_OR_RECENT_TEXT
+        val strings = AppLocale.strings(context)
+        val awayMs = timeSinceLastExitMs() ?: return strings.splashRecent
 
         return when {
-            awayMs >= MONTH_31_MS -> ONE_MONTH_TEXT
-            awayMs >= WEEK_MS -> ONE_WEEK_TEXT
-            awayMs >= DAY_MS -> ONE_DAY_TEXT
-            awayMs >= HOUR_MS -> ONE_HOUR_TEXT
-            else -> FIRST_OR_RECENT_TEXT
+            awayMs >= MONTH_31_MS -> strings.splashMonth
+            awayMs >= WEEK_MS -> strings.splashWeek
+            awayMs >= DAY_MS -> strings.splashDay
+            awayMs >= HOUR_MS -> strings.splashHour
+            else -> strings.splashRecent
         }
     }
 
