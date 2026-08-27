@@ -26,6 +26,12 @@
             android:exported="false"
             android:initOrder="100" />
 
+        <provider
+            android:name=".MainPageGapInitializerProvider"
+            android:authorities="${applicationId}.main-gap-init"
+            android:exported="false"
+            android:initOrder="90" />
+
         <activity
             android:name=".DeviceFilePickerActivity"
             android:excludeFromRecents="true"
