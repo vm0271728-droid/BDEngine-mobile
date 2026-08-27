@@ -190,18 +190,18 @@ class MainActivity : AppCompatActivity() {
                         }
 
                         if (window.scrollX !== 0 || window.scrollY !== 0) {
-                            window.scrollTo(0, 0);
+                            window.scrollTo(0, 0)
                         }
                     } catch (_) {}
-                };
+                }
 
-                lockRoot();
-                document.addEventListener('DOMContentLoaded', lockRoot, { once: true });
+                lockRoot()
+                document.addEventListener('DOMContentLoaded', lockRoot, { once: true })
                 window.addEventListener('scroll', () => {
                     if (window.scrollX !== 0 || window.scrollY !== 0) {
-                        window.scrollTo(0, 0);
+                        window.scrollTo(0, 0)
                     }
-                }, { passive: true });
+                }, { passive: true })
             })();
         """.trimIndent()
 
@@ -285,12 +285,9 @@ class MainActivity : AppCompatActivity() {
             overScrollMode = View.OVER_SCROLL_NEVER
             isHorizontalScrollBarEnabled = false
             isVerticalScrollBarEnabled = false
-
-            // Keep Chromium on the GPU path while the editor is active.
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                // Strong renderer binding while visible; Android may waive it in background.
                 setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
             }
         }
@@ -317,11 +314,9 @@ class MainActivity : AppCompatActivity() {
             userAgentString = DESKTOP_USER_AGENT
             useWideViewPort = true
             loadWithOverviewMode = false
-
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
-
             mediaPlaybackRequiresUserGesture = false
             allowFileAccess = true
             allowContentAccess = true
@@ -337,8 +332,6 @@ class MainActivity : AppCompatActivity() {
         )
 
         webView.setOnScrollChangeListener { _, scrollX, scrollY, _, _ ->
-            // The editor itself is a fixed workspace. Only its internal panels should scroll.
-            // If Chromium tries to move the root document, pin it back to the origin.
             if (isEditorUrl(webView.url) && (scrollX != 0 || scrollY != 0)) {
                 webView.scrollTo(0, 0)
             }
@@ -357,11 +350,9 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-
                 view?.evaluateJavascript(GOOGLE_AUTH_LINK_SCRIPT, null)
 
                 if (isEditorUrl(url)) {
-                    // Fallback for WebView implementations without document-start support.
                     view?.evaluateJavascript(EDITOR_SCROLL_LOCK_SCRIPT, null)
                     view?.scrollTo(0, 0)
                 } else {
@@ -455,9 +446,7 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
-        if (showImmediately) {
-            showSplash(initialText)
-        }
+        if (showImmediately) showSplash(initialText)
     }
 
     private fun showSplash(text: String) {
@@ -504,17 +493,10 @@ class MainActivity : AppCompatActivity() {
 
         val settingsScroll = object : ScrollView(this) {
             override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-                val screenHeight = if (rootLayout.height > 0) {
-                    rootLayout.height
-                } else {
-                    resources.displayMetrics.heightPixels
-                }
+                val screenHeight = if (rootLayout.height > 0) rootLayout.height else resources.displayMetrics.heightPixels
                 val availableHeight = (screenHeight - dp(24)).coerceAtLeast(dp(180))
                 val maxHeight = minOf(dp(340), availableHeight)
-                val cappedHeightSpec = View.MeasureSpec.makeMeasureSpec(
-                    maxHeight,
-                    View.MeasureSpec.AT_MOST
-                )
+                val cappedHeightSpec = View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST)
                 super.onMeasure(widthMeasureSpec, cappedHeightSpec)
             }
         }.apply {
@@ -523,7 +505,7 @@ class MainActivity : AppCompatActivity() {
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             addView(
                 settingsContent,
-                ScrollView.LayoutParams(
+                FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
@@ -556,10 +538,7 @@ class MainActivity : AppCompatActivity() {
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
 
-        scaleRow.addView(
-            scaleLabel,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
+        scaleRow.addView(scaleLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         scaleRow.addView(scaleValue)
 
         val seekBar = SeekBar(this).apply {
@@ -569,14 +548,9 @@ class MainActivity : AppCompatActivity() {
             thumbTintList = ColorStateList.valueOf(Color.rgb(220, 250, 248))
             setPadding(0, dp(3), 0, 0)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(
-                    seekBar: SeekBar?,
-                    progress: Int,
-                    fromUser: Boolean
-                ) {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     scalePercent = progress.coerceIn(0, 100)
                     updateScaleValue()
-
                     if (fromUser) {
                         applySmallestWidthScale(scalePercent)
                         saveScalePercent()
@@ -584,10 +558,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                    saveScalePercent()
-                }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) = saveScalePercent()
             })
         }
 
@@ -625,10 +596,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { showLanguageMenu(this) }
         }
 
-        languageRow.addView(
-            languageLabel,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
+        languageRow.addView(languageLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         languageRow.addView(configureLanguageButton)
 
         val secondDivider = View(this).apply {
@@ -654,52 +622,23 @@ class MainActivity : AppCompatActivity() {
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
 
-        usageRow.addView(
-            usageLabel,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
+        usageRow.addView(usageLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         usageRow.addView(usageValue)
 
         settingsContent.addView(heading)
-        settingsContent.addView(
-            scaleRow,
-            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
-        )
-        settingsContent.addView(
-            seekBar,
-            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
-        )
+        settingsContent.addView(scaleRow, LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT))
+        settingsContent.addView(seekBar, LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT))
         settingsContent.addView(
             firstDivider,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(1)
-            ).apply {
-                topMargin = dp(7)
-            }
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(7) }
         )
-        settingsContent.addView(
-            languageRow,
-            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
-        )
-        settingsContent.addView(
-            secondDivider,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(1)
-            )
-        )
-        settingsContent.addView(
-            usageRow,
-            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT)
-        )
+        settingsContent.addView(languageRow, LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT))
+        settingsContent.addView(secondDivider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
+        settingsContent.addView(usageRow, LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT))
 
         settingsPanel.addView(
             settingsScroll,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         )
 
         updateScaleValue()
@@ -707,10 +646,7 @@ class MainActivity : AppCompatActivity() {
 
         rootLayout.addView(
             settingsPanel,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         )
 
         settingsButton = ImageView(this).apply {
@@ -727,10 +663,7 @@ class MainActivity : AppCompatActivity() {
 
         rootLayout.addView(
             settingsButton,
-            FrameLayout.LayoutParams(
-                dp(SETTINGS_BUTTON_SIZE_DP),
-                dp(SETTINGS_BUTTON_SIZE_DP)
-            )
+            FrameLayout.LayoutParams(dp(SETTINGS_BUTTON_SIZE_DP), dp(SETTINGS_BUTTON_SIZE_DP))
         )
 
         enableGearDragging()
@@ -741,24 +674,9 @@ class MainActivity : AppCompatActivity() {
         val selectedMode = AppLocale.selectedLanguageMode(this)
 
         PopupMenu(this, anchor).apply {
-            menu.add(
-                LANGUAGE_MENU_GROUP,
-                LANGUAGE_MENU_SYSTEM,
-                0,
-                strings.systemDefault
-            )
-            menu.add(
-                LANGUAGE_MENU_GROUP,
-                LANGUAGE_MENU_RUSSIAN,
-                1,
-                "Русский"
-            )
-            menu.add(
-                LANGUAGE_MENU_GROUP,
-                LANGUAGE_MENU_ENGLISH,
-                2,
-                "English"
-            )
+            menu.add(LANGUAGE_MENU_GROUP, LANGUAGE_MENU_SYSTEM, 0, strings.systemDefault)
+            menu.add(LANGUAGE_MENU_GROUP, LANGUAGE_MENU_RUSSIAN, 1, "Русский")
+            menu.add(LANGUAGE_MENU_GROUP, LANGUAGE_MENU_ENGLISH, 2, "English")
             menu.setGroupCheckable(LANGUAGE_MENU_GROUP, true, true)
 
             when (selectedMode) {
@@ -803,12 +721,7 @@ class MainActivity : AppCompatActivity() {
                     startX = view.x
                     startY = view.y
                     dragging = false
-
-                    view.animate()
-                        .scaleX(0.94f)
-                        .scaleY(0.94f)
-                        .setDuration(80L)
-                        .start()
+                    view.animate().scaleX(0.94f).scaleY(0.94f).setDuration(80L).start()
                     true
                 }
 
@@ -824,7 +737,6 @@ class MainActivity : AppCompatActivity() {
                     if (dragging) {
                         val maxX = (rootLayout.width - view.width).coerceAtLeast(0).toFloat()
                         val maxY = (rootLayout.height - view.height).coerceAtLeast(0).toFloat()
-
                         view.x = (startX + dx).coerceIn(0f, maxX)
                         view.y = (startY + dy).coerceIn(0f, maxY)
                     }
@@ -832,12 +744,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    view.animate()
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .setDuration(100L)
-                        .start()
-
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(100L).start()
                     if (dragging) {
                         saveGearPosition()
                     } else if (event.actionMasked == MotionEvent.ACTION_UP) {
@@ -856,7 +763,6 @@ class MainActivity : AppCompatActivity() {
             hideSettingsPanel()
             return
         }
-
         if (splashOverlay.visibility == View.VISIBLE) return
 
         updateUsageValue()
@@ -864,15 +770,12 @@ class MainActivity : AppCompatActivity() {
         settingsPanel.bringToFront()
         settingsButton.bringToFront()
         settingsPanel.post { positionSettingsPanelNearGear() }
-
         mainHandler.removeCallbacks(usageTicker)
         mainHandler.post(usageTicker)
     }
 
     private fun hideSettingsPanel() {
-        if (::settingsPanel.isInitialized) {
-            settingsPanel.visibility = View.GONE
-        }
+        if (::settingsPanel.isInitialized) settingsPanel.visibility = View.GONE
         mainHandler.removeCallbacks(usageTicker)
     }
 
@@ -885,23 +788,15 @@ class MainActivity : AppCompatActivity() {
         val rootWidth = rootLayout.width.toFloat()
         val rootHeight = rootLayout.height.toFloat()
 
-        val placeLeft = settingsButton.x > rootWidth / 2f
-        val wantedX = if (placeLeft) {
+        val wantedX = if (settingsButton.x > rootWidth / 2f) {
             settingsButton.x - panelWidth - margin
         } else {
             settingsButton.x + settingsButton.width + margin
         }
-
         val wantedY = settingsButton.y + settingsButton.height / 2f - panelHeight / 2f
 
-        settingsPanel.x = wantedX.coerceIn(
-            margin,
-            (rootWidth - panelWidth - margin).coerceAtLeast(margin)
-        )
-        settingsPanel.y = wantedY.coerceIn(
-            margin,
-            (rootHeight - panelHeight - margin).coerceAtLeast(margin)
-        )
+        settingsPanel.x = wantedX.coerceIn(margin, (rootWidth - panelWidth - margin).coerceAtLeast(margin))
+        settingsPanel.y = wantedY.coerceIn(margin, (rootHeight - panelHeight - margin).coerceAtLeast(margin))
     }
 
     private fun applySmallestWidthScale(progress: Int) {
@@ -917,12 +812,10 @@ class MainActivity : AppCompatActivity() {
             val physicalShortSidePx = minOf(rootWidthPx, rootHeightPx)
             val virtualShortSidePx = targetSmallestDp * density
             val viewScale = physicalShortSidePx / virtualShortSidePx
-
             if (viewScale <= 0f) return@post
 
             val virtualWidthPx = (rootWidthPx / viewScale).roundToInt().coerceAtLeast(1)
             val virtualHeightPx = (rootHeightPx / viewScale).roundToInt().coerceAtLeast(1)
-
             val params = webView.layoutParams as FrameLayout.LayoutParams
             if (params.width != virtualWidthPx || params.height != virtualHeightPx) {
                 params.width = virtualWidthPx
@@ -937,20 +830,14 @@ class MainActivity : AppCompatActivity() {
             webView.translationX = 0f
             webView.translationY = 0f
             webView.requestLayout()
-
-            if (isEditorUrl(webView.url)) {
-                webView.scrollTo(0, 0)
-            }
+            if (isEditorUrl(webView.url)) webView.scrollTo(0, 0)
         }
     }
 
-    private fun smallestWidthDpFor(progress: Int): Int {
-        return DP_AT_ZERO + progress.coerceIn(0, 100) * DP_PER_PERCENT
-    }
+    private fun smallestWidthDpFor(progress: Int): Int = DP_AT_ZERO + progress.coerceIn(0, 100) * DP_PER_PERCENT
 
     private fun updateScaleValue() {
-        if (!::scaleValue.isInitialized) return
-        scaleValue.text = "${smallestWidthDpFor(scalePercent)} dp"
+        if (::scaleValue.isInitialized) scaleValue.text = "${smallestWidthDpFor(scalePercent)} dp"
     }
 
     private fun updateUsageValue() {
@@ -959,9 +846,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveScalePercent() {
-        preferences.edit()
-            .putInt(PREF_SCALE_PERCENT_V2, scalePercent)
-            .apply()
+        preferences.edit().putInt(PREF_SCALE_PERCENT_V2, scalePercent).apply()
     }
 
     private fun restoreGearPosition() {
@@ -969,10 +854,8 @@ class MainActivity : AppCompatActivity() {
 
         val savedX = preferences.getFloat(PREF_GEAR_X, -1f)
         val savedY = preferences.getFloat(PREF_GEAR_Y, -1f)
-
         val defaultX = (rootLayout.width - settingsButton.width - dp(14)).toFloat()
         val defaultY = (rootLayout.height - settingsButton.height).coerceAtLeast(0) / 2f
-
         val maxX = (rootLayout.width - settingsButton.width).coerceAtLeast(0).toFloat()
         val maxY = (rootLayout.height - settingsButton.height).coerceAtLeast(0).toFloat()
 
@@ -982,10 +865,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveGearPosition() {
         if (!::settingsButton.isInitialized) return
-        preferences.edit()
-            .putFloat(PREF_GEAR_X, settingsButton.x)
-            .putFloat(PREF_GEAR_Y, settingsButton.y)
-            .apply()
+        preferences.edit().putFloat(PREF_GEAR_X, settingsButton.x).putFloat(PREF_GEAR_Y, settingsButton.y).apply()
     }
 
     private fun configureDesktopIdentity() {
@@ -995,7 +875,6 @@ class MainActivity : AppCompatActivity() {
                 .setPlatform("Windows")
                 .setPlatformVersion("10.0.0")
                 .build()
-
             WebSettingsCompat.setUserAgentMetadata(webView.settings, metadata)
         }
 
@@ -1003,37 +882,21 @@ class MainActivity : AppCompatActivity() {
             WebViewCompat.addDocumentStartJavaScript(
                 webView,
                 DESKTOP_IDENTITY_SCRIPT,
-                setOf(
-                    "https://block-display.com",
-                    "https://bdengine.app",
-                    "https://beta.bdengine.app"
-                )
+                setOf("https://block-display.com", "https://bdengine.app", "https://beta.bdengine.app")
             )
-
-            WebViewCompat.addDocumentStartJavaScript(
-                webView,
-                GOOGLE_AUTH_LINK_SCRIPT,
-                setOf("https://block-display.com")
-            )
-
+            WebViewCompat.addDocumentStartJavaScript(webView, GOOGLE_AUTH_LINK_SCRIPT, setOf("https://block-display.com"))
             WebViewCompat.addDocumentStartJavaScript(
                 webView,
                 EDITOR_SCROLL_LOCK_SCRIPT,
-                setOf(
-                    "https://bdengine.app",
-                    "https://beta.bdengine.app"
-                )
+                setOf("https://bdengine.app", "https://beta.bdengine.app")
             )
         }
     }
 
     private fun openGoogleAuthExternallyIfNeeded(url: String): Boolean {
         if (!isGoogleAuthUrl(url)) return false
-
         return try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                addCategory(Intent.CATEGORY_BROWSABLE)
-            }
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { addCategory(Intent.CATEGORY_BROWSABLE) }
             startActivity(intent)
             true
         } catch (_: ActivityNotFoundException) {
@@ -1045,7 +908,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun isGoogleAuthUrl(url: String?): Boolean {
         if (url.isNullOrBlank()) return false
-
         return try {
             val uri = Uri.parse(url)
             val host = uri.host.orEmpty().lowercase()
@@ -1055,8 +917,7 @@ class MainActivity : AppCompatActivity() {
             host == "accounts.google.com" ||
                 host.endsWith(".accounts.google.com") ||
                 host == "oauth2.googleapis.com" ||
-                ((host == "block-display.com" || host == "www.block-display.com") &&
-                    path.contains("wp-login.php") && provider == "google")
+                ((host == "block-display.com" || host == "www.block-display.com") && path.contains("wp-login.php") && provider == "google")
         } catch (_: Throwable) {
             false
         }
@@ -1082,15 +943,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-
         webView.onResume()
         hideSystemUi()
         usageTracker.startSession()
-
         mainHandler.removeCallbacks(usageCheckpoint)
         mainHandler.postDelayed(usageCheckpoint, USAGE_CHECKPOINT_MS)
-
-        // Deliberately no splash here: returning from background must be instant.
         rootLayout.post {
             applySmallestWidthScale(scalePercent)
             if (isEditorUrl(webView.url)) webView.scrollTo(0, 0)
@@ -1132,15 +989,11 @@ class MainActivity : AppCompatActivity() {
             shape = GradientDrawable.RECTANGLE
             setColor(fillColor)
             cornerRadius = radius
-            if (strokeColor != null && strokeWidth > 0) {
-                setStroke(strokeWidth, strokeColor)
-            }
+            if (strokeColor != null && strokeWidth > 0) setStroke(strokeWidth, strokeColor)
         }
     }
 
-    private fun dp(value: Int): Int {
-        return (value * resources.displayMetrics.density).roundToInt()
-    }
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
 
     private fun hideSystemUi() {
         window.decorView.systemUiVisibility =
