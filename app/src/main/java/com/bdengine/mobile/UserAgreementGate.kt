@@ -395,7 +395,7 @@ private object UserAgreementGate {
             setFadingEdgeLength(dp(activity, 18))
             addView(
                 agreementText,
-                ScrollView.LayoutParams(
+                FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
