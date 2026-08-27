@@ -182,14 +182,28 @@ jobs:
         run: |
           TAG="v${VERSION}"
           APK="BDEngine-Mobile-${VERSION}.apk"
+          NOTES="$RUNNER_TEMP/release-notes.md"
+
+          cat > "$NOTES" <<'EOF'
+          - Постоянная подпись APK
+          - Новое уведомление загрузки
+          - Открыть с устройства (Beta)
+          - Пользовательское соглашение
+          - Добавлена локализация
+          - Улучшена работа приложения в фоне
+          - Исправлена прокрутка главной страницы
+          - Обновлена система сборки и GitHub Actions
+          - Автоматическая проверка подписи APK
+          EOF
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" BDEngine-mobile-source.zip --clobber
+            gh release edit "$TAG" --notes-file "$NOTES"
           else
             gh release create "$TAG" \
               "$APK" \
               BDEngine-mobile-source.zip \
               --target "$GITHUB_SHA" \
               --title "BDEngine Mobile v${VERSION}" \
-              --notes "Неофициальное Android-приложение для BDEngine.\n\nВ релиз включены APK и архив исходного кода текущей версии."
+              --notes-file "$NOTES"
           fi
