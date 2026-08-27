@@ -133,7 +133,7 @@ class DeviceFilePickerActivity : Activity() {
         if (rejectedCount > 0) {
             Toast.makeText(
                 this,
-                "Поддерживаются только .bdengine и .bdstudio",
+                AppLocale.strings(this).supportedProjectFilesOnly,
                 Toast.LENGTH_SHORT
             ).show()
         }
