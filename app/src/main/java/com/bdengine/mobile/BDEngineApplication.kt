@@ -268,66 +268,44 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
                 if (window.__bdengineFixedBodyScrollInstalled) return;
                 window.__bdengineFixedBodyScrollInstalled = true;
 
-                const STYLE_ID = '__bdengineFixedBodyScrollStyle';
-
-                const installStyle = () => {
+                const install = () => {
                     try {
-                        if (document.getElementById(STYLE_ID)) return;
+                        const html = document.documentElement;
+                        const body = document.body;
+                        if (!html || !body) return;
 
-                        const style = document.createElement('style');
-                        style.id = STYLE_ID;
-                        style.textContent = `
-                            html {
-                                width: 100% !important;
-                                height: 100% !important;
-                                overflow: hidden !important;
-                                overscroll-behavior: none !important;
-                            }
+                        // Keep the browser/root viewport physically pinned. The body is
+                        // the only vertical scrolling surface, so the whole page cannot
+                        // drift upward while the user can still scroll through content.
+                        html.style.setProperty('height', '100%', 'important');
+                        html.style.setProperty('overflow', 'hidden', 'important');
+                        html.style.setProperty('overscroll-behavior', 'none', 'important');
 
-                            body {
-                                position: fixed !important;
-                                top: 0 !important;
-                                right: 0 !important;
-                                bottom: 0 !important;
-                                left: 0 !important;
-                                width: auto !important;
-                                height: auto !important;
-                                min-height: 0 !important;
-                                max-height: none !important;
-                                box-sizing: border-box !important;
-                                overflow-x: hidden !important;
-                                overflow-y: auto !important;
-                                overscroll-behavior-x: none !important;
-                                overscroll-behavior-y: contain !important;
-                                -webkit-overflow-scrolling: touch !important;
-                            }
-                        `;
+                        body.style.setProperty('height', '100%', 'important');
+                        body.style.setProperty('max-height', '100%', 'important');
+                        body.style.setProperty('overflow-x', 'hidden', 'important');
+                        body.style.setProperty('overflow-y', 'auto', 'important');
+                        body.style.setProperty('overscroll-behavior-x', 'none', 'important');
+                        body.style.setProperty('overscroll-behavior-y', 'contain', 'important');
+                        body.style.setProperty('-webkit-overflow-scrolling', 'touch', 'important');
 
-                        (document.head || document.documentElement).appendChild(style);
-                    } catch (_) {}
-                };
-
-                const pinOuterViewport = () => {
-                    try {
                         if (window.scrollX !== 0 || window.scrollY !== 0) {
                             window.scrollTo(0, 0);
                         }
                     } catch (_) {}
                 };
 
-                installStyle();
-                pinOuterViewport();
-
+                install();
                 if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', () => {
-                        installStyle();
-                        pinOuterViewport();
-                    }, { once: true });
+                    document.addEventListener('DOMContentLoaded', install, { once: true });
                 }
 
-                // The fixed body is the scroll container. This listener only corrects
-                // accidental scrolling of the outer document and never changes body.scrollTop.
-                window.addEventListener('scroll', pinOuterViewport, { passive: true });
+                // This listener only pins the outer window. It never changes body.scrollTop.
+                window.addEventListener('scroll', () => {
+                    if (window.scrollX !== 0 || window.scrollY !== 0) {
+                        window.scrollTo(0, 0);
+                    }
+                }, { passive: true });
             })();
         """.trimIndent()
 
@@ -376,23 +354,17 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
 
             val rootLayout = findRootFrameLayout(webView) ?: return@post
 
-            // Chromium decides the exact CPU thread allocation itself. These are the
-            // strongest public Android controls available to keep its renderer fast.
             webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
             }
 
-            // BDEngine's "Открыть с устройства" is a standard web file chooser.
-            // Route it through Android's Storage Access Framework instead of leaving
-            // the WebView with the default no-op WebChromeClient.
             webView.webChromeClient = BDEngineWebChromeClient(activity)
 
             val controller = DownloadController(activity, rootLayout, webView)
             controller.attach()
             downloadControllers[activity] = controller
 
-            // Current document.
             controller.installPageBridge()
             installFileSystemSaveShim(webView)
             installMainPageFixedScroll(webView)
@@ -402,25 +374,10 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
                 installMainPageFixedScroll(webView)
             }, 500L)
 
-            // Every later BDEngine navigation, including the editor domain.
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                WebViewCompat.addDocumentStartJavaScript(
-                    webView,
-                    DOWNLOAD_BRIDGE_SCRIPT,
-                    TRUSTED_ORIGINS
-                )
-
-                WebViewCompat.addDocumentStartJavaScript(
-                    webView,
-                    FILE_SYSTEM_SAVE_SHIM_SCRIPT,
-                    TRUSTED_ORIGINS
-                )
-
-                WebViewCompat.addDocumentStartJavaScript(
-                    webView,
-                    MAIN_PAGE_FIXED_SCROLL_SCRIPT,
-                    BLOCK_DISPLAY_ORIGINS
-                )
+                WebViewCompat.addDocumentStartJavaScript(webView, DOWNLOAD_BRIDGE_SCRIPT, TRUSTED_ORIGINS)
+                WebViewCompat.addDocumentStartJavaScript(webView, FILE_SYSTEM_SAVE_SHIM_SCRIPT, TRUSTED_ORIGINS)
+                WebViewCompat.addDocumentStartJavaScript(webView, MAIN_PAGE_FIXED_SCROLL_SCRIPT, BLOCK_DISPLAY_ORIGINS)
             }
         }
     }
