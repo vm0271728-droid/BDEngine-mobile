@@ -15,15 +15,15 @@ import androidx.webkit.WebViewFeature
 import java.util.WeakHashMap
 
 /**
- * Compacts only the oversized landing-page sections that become visibly empty when
- * BDEngine Mobile uses a large virtual dp viewport. It deliberately does not change
- * root scrolling or WebView geometry.
+ * Keeps the Block Display landing page's root window stationary and moves scrolling
+ * onto a real inner page container. Unlike body/html, the chosen host is not Chromium's
+ * special root scroller, so normal touch scrolling can continue without moving WebView.
  */
 class MainPageGapInitializerProvider : ContentProvider() {
 
     override fun onCreate(): Boolean {
         val app = context?.applicationContext as? Application ?: return false
-        MainPageGapFix.register(app)
+        MainPageInnerScrollFix.register(app)
         return true
     }
 
@@ -47,7 +47,7 @@ class MainPageGapInitializerProvider : ContentProvider() {
     ): Int = 0
 }
 
-private object MainPageGapFix {
+private object MainPageInnerScrollFix {
 
     private val attached = WeakHashMap<WebView, Boolean>()
 
@@ -58,8 +58,7 @@ private object MainPageGapFix {
 
     private val SCRIPT = """
         (() => {
-            if (window.__bdengineMainGapFixInstalled) return;
-            window.__bdengineMainGapFixInstalled = true;
+            if (window.__bdengineInnerRootScrollInstalled) return;
 
             const normalize = value => String(value || '')
                 .replace(/\s+/g, ' ')
@@ -71,152 +70,160 @@ private object MainPageGapFix {
                 const nodes = document.querySelectorAll(
                     'h1,h2,h3,h4,h5,h6,[role="heading"],a,button,p,span'
                 );
-
                 for (const node of nodes) {
                     if (normalize(node.textContent) === wanted) return node;
                 }
                 return null;
             };
 
-            const sectionFor = (anchor, otherAnchor) => {
-                if (!anchor) return null;
-
-                const semanticSection = anchor.closest('section');
-                if (semanticSection && (!otherAnchor || !semanticSection.contains(otherAnchor))) {
-                    return semanticSection;
+            const isUsable = element => {
+                if (!element || element === document.body || element === document.documentElement) {
+                    return false;
                 }
 
-                let node = anchor;
-                let best = anchor.parentElement;
-                while (node && node.parentElement) {
-                    const parent = node.parentElement;
-                    if (otherAnchor && parent.contains(otherAnchor)) break;
-                    best = parent;
-                    node = parent;
-                }
-                return best;
-            };
-
-            const visible = element => {
                 try {
+                    const rect = element.getBoundingClientRect();
                     const style = getComputedStyle(element);
                     if (style.display === 'none' || style.visibility === 'hidden') return false;
                     if (style.position === 'fixed') return false;
-                    const rect = element.getBoundingClientRect();
-                    return rect.width > 2 && rect.height > 2;
+                    if (rect.width < window.innerWidth * 0.60) return false;
+                    return true;
                 } catch (_) {
                     return false;
                 }
             };
 
-            const meaningfulBottom = section => {
-                let bottom = section.getBoundingClientRect().top;
-                const nodes = section.querySelectorAll(
-                    'h1,h2,h3,h4,h5,h6,p,a,button,img,picture,video,canvas,svg'
+            const commonAncestor = (first, second) => {
+                if (!first || !second) return null;
+                const seen = new Set();
+                let node = first;
+                while (node && node !== document.body) {
+                    seen.add(node);
+                    node = node.parentElement;
+                }
+                node = second;
+                while (node && node !== document.body) {
+                    if (seen.has(node)) return node;
+                    node = node.parentElement;
+                }
+                return null;
+            };
+
+            const chooseHost = () => {
+                const doc = document.scrollingElement || document.documentElement;
+                const documentHeight = Math.max(
+                    doc ? doc.scrollHeight : 0,
+                    document.body ? document.body.scrollHeight : 0,
+                    window.innerHeight
                 );
 
-                for (const node of nodes) {
-                    if (!visible(node)) continue;
-                    bottom = Math.max(bottom, node.getBoundingClientRect().bottom);
+                const ecosystem = findExact('Ecosystem');
+                const startModeling = findExact('Start modeling now');
+                let shared = commonAncestor(ecosystem, startModeling);
+
+                // Prefer the page wrapper that contains the lower landing sections.
+                // Climb until it carries most of the document's vertical content.
+                while (shared && shared.parentElement && shared.parentElement !== document.body) {
+                    if (isUsable(shared) && shared.scrollHeight >= documentHeight * 0.72) break;
+                    shared = shared.parentElement;
                 }
-                return bottom;
+                if (isUsable(shared) && shared.scrollHeight >= window.innerHeight * 1.15) {
+                    return shared;
+                }
+
+                const preferred = [
+                    document.querySelector('main'),
+                    document.querySelector('[role="main"]'),
+                    document.querySelector('#page'),
+                    document.querySelector('#app'),
+                    document.querySelector('#root'),
+                    document.querySelector('#__next'),
+                    document.querySelector('.site'),
+                    document.querySelector('.site-content'),
+                    document.querySelector('.page')
+                ];
+
+                for (const candidate of preferred) {
+                    if (!isUsable(candidate)) continue;
+                    if (candidate.scrollHeight >= documentHeight * 0.72) return candidate;
+                }
+
+                // Final fallback: a direct body child that visually represents the page.
+                let best = null;
+                let bestScore = 0;
+                for (const candidate of Array.from(document.body?.children || [])) {
+                    if (!isUsable(candidate)) continue;
+                    const score = candidate.scrollHeight;
+                    if (score > bestScore && score >= documentHeight * 0.72) {
+                        best = candidate;
+                        bestScore = score;
+                    }
+                }
+                return best;
             };
 
-            const compactTrailingSpace = (section, threshold) => {
-                if (!section) return false;
+            const install = () => {
+                if (window.__bdengineInnerRootScrollInstalled) return true;
+                const html = document.documentElement;
+                const body = document.body;
+                if (!html || !body) return false;
 
-                const rect = section.getBoundingClientRect();
-                const contentBottom = meaningfulBottom(section);
-                const blank = rect.bottom - contentBottom;
-                if (blank <= threshold) return false;
+                const host = chooseHost();
+                if (!host) return false;
 
-                section.style.setProperty('min-height', '0px', 'important');
-                section.style.setProperty('height', 'auto', 'important');
+                const previousY = window.scrollY ||
+                    (document.scrollingElement ? document.scrollingElement.scrollTop : 0) || 0;
 
-                const style = getComputedStyle(section);
-                const paddingBottom = parseFloat(style.paddingBottom) || 0;
-                const marginBottom = parseFloat(style.marginBottom) || 0;
+                window.__bdengineInnerRootScrollInstalled = true;
+                window.__bdengineInnerRootScrollHost = host;
 
-                if (paddingBottom > threshold * 0.45) {
-                    section.style.setProperty('padding-bottom', '32px', 'important');
-                }
-                if (marginBottom > threshold * 0.45) {
-                    section.style.setProperty('margin-bottom', '0px', 'important');
-                }
+                // Root scrolling is what makes the transformed Android WebView expose the
+                // oversized virtual viewport. Keep that root stationary.
+                html.style.setProperty('height', '100%', 'important');
+                html.style.setProperty('overflow', 'hidden', 'important');
+                html.style.setProperty('overscroll-behavior', 'none', 'important');
+
+                body.style.setProperty('height', '100%', 'important');
+                body.style.setProperty('overflow', 'hidden', 'important');
+                body.style.setProperty('overscroll-behavior', 'none', 'important');
+
+                // This is a normal DOM element, not body/html, so Chromium treats it as a
+                // genuine independent scroll surface.
+                host.style.setProperty('height', '100vh', 'important');
+                host.style.setProperty('max-height', '100vh', 'important');
+                host.style.setProperty('min-height', '0px', 'important');
+                host.style.setProperty('overflow-x', 'hidden', 'important');
+                host.style.setProperty('overflow-y', 'auto', 'important');
+                host.style.setProperty('overscroll-behavior-y', 'contain', 'important');
+                host.style.setProperty('-webkit-overflow-scrolling', 'touch', 'important');
+                host.style.setProperty('touch-action', 'pan-y pinch-zoom', 'important');
+
+                const pinRoot = () => {
+                    if (window.scrollX !== 0 || window.scrollY !== 0) {
+                        window.scrollTo(0, 0);
+                    }
+                };
+
+                pinRoot();
+                if (previousY > 0) host.scrollTop = previousY;
+                window.addEventListener('scroll', pinRoot, { passive: true });
                 return true;
             };
 
-            const compactLeadingSpace = (section, anchor, threshold) => {
-                if (!section || !anchor) return false;
-
-                const sectionRect = section.getBoundingClientRect();
-                const anchorRect = anchor.getBoundingClientRect();
-                const blank = anchorRect.top - sectionRect.top;
-                if (blank <= threshold) return false;
-
-                section.style.setProperty('min-height', '0px', 'important');
-                section.style.setProperty('height', 'auto', 'important');
-
-                const style = getComputedStyle(section);
-                const paddingTop = parseFloat(style.paddingTop) || 0;
-                const marginTop = parseFloat(style.marginTop) || 0;
-
-                if (paddingTop > threshold * 0.45) {
-                    section.style.setProperty('padding-top', '32px', 'important');
-                }
-                if (marginTop > threshold * 0.45) {
-                    section.style.setProperty('margin-top', '0px', 'important');
-                }
-                return true;
-            };
-
-            let scheduled = false;
-            const repair = () => {
-                scheduled = false;
-                try {
-                    const ecosystem = findExact('Ecosystem');
-                    const startModeling = findExact('Start modeling now');
-                    if (!ecosystem || !startModeling) return;
-
-                    const ecosystemSection = sectionFor(ecosystem, startModeling);
-                    const startSection = sectionFor(startModeling, ecosystem);
-                    const threshold = Math.max(110, window.innerHeight * 0.20);
-
-                    compactTrailingSpace(ecosystemSection, threshold);
-                    compactLeadingSpace(startSection, startModeling, threshold);
-                } catch (_) {}
-            };
-
-            const schedule = () => {
-                if (scheduled) return;
-                scheduled = true;
-                requestAnimationFrame(repair);
+            const tryInstall = () => {
+                try { install(); } catch (_) {}
             };
 
             if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', schedule, { once: true });
+                document.addEventListener('DOMContentLoaded', tryInstall, { once: true });
             } else {
-                schedule();
+                tryInstall();
             }
 
-            window.addEventListener('resize', schedule, { passive: true });
-            window.addEventListener('load', schedule, { passive: true });
-            document.addEventListener('load', schedule, { capture: true, passive: true });
-
-            const observe = () => {
-                if (!document.documentElement) return;
-                new MutationObserver(schedule).observe(document.documentElement, {
-                    childList: true,
-                    subtree: true
-                });
-            };
-
-            if (document.documentElement) observe();
-            else document.addEventListener('DOMContentLoaded', observe, { once: true });
-
-            setTimeout(schedule, 250);
-            setTimeout(schedule, 1000);
-            setTimeout(schedule, 2500);
+            window.addEventListener('load', tryInstall, { passive: true });
+            setTimeout(tryInstall, 250);
+            setTimeout(tryInstall, 750);
+            setTimeout(tryInstall, 1600);
         })();
     """.trimIndent()
 
@@ -260,31 +267,15 @@ private object MainPageGapFix {
                 return@post
             }
 
-            if (attached.put(webView, true) == true) {
-                if (isBlockDisplayUrl(webView.url)) webView.evaluateJavascript(SCRIPT, null)
-                return@post
-            }
+            if (attached.put(webView, true) != null) return@post
 
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 WebViewCompat.addDocumentStartJavaScript(webView, SCRIPT, origins)
             }
 
-            if (isBlockDisplayUrl(webView.url)) {
-                webView.evaluateJavascript(SCRIPT, null)
-                webView.postDelayed({
-                    if (isBlockDisplayUrl(webView.url)) webView.evaluateJavascript(SCRIPT, null)
-                }, 900L)
-            }
-        }
-    }
-
-    private fun isBlockDisplayUrl(url: String?): Boolean {
-        if (url.isNullOrBlank()) return false
-        return try {
-            val host = Uri.parse(url).host.orEmpty().lowercase()
-            host == "block-display.com" || host == "www.block-display.com"
-        } catch (_: Throwable) {
-            false
+            webView.evaluateJavascript(SCRIPT, null)
+            webView.postDelayed({ webView.evaluateJavascript(SCRIPT, null) }, 600L)
+            webView.postDelayed({ webView.evaluateJavascript(SCRIPT, null) }, 1800L)
         }
     }
 
