@@ -136,6 +136,133 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
             })();
         """.trimIndent()
 
+        private val FILE_SYSTEM_SAVE_SHIM_SCRIPT = """
+            (() => {
+                const bridge = window.BDEngineDownloads;
+                if (!bridge) return;
+
+                if (window.__bdengineNativeFileSystemSaveInstalled) return;
+                window.__bdengineNativeFileSystemSaveInstalled = true;
+
+                const safeSuggestedName = options => {
+                    try {
+                        const name = String(options && options.suggestedName || '').trim();
+                        return name || 'BDEngine-project.bdengine';
+                    } catch (_) {
+                        return 'BDEngine-project.bdengine';
+                    }
+                };
+
+                const normalizeWriteValue = value => {
+                    if (!value || typeof value !== 'object' || typeof value.type !== 'string') {
+                        return { action: 'write', data: value };
+                    }
+
+                    if (value.type === 'write') {
+                        return { action: 'write', data: value.data };
+                    }
+                    if (value.type === 'truncate') {
+                        return { action: 'truncate', size: Number(value.size || 0) };
+                    }
+                    if (value.type === 'seek') {
+                        return { action: 'seek', position: Number(value.position || 0) };
+                    }
+
+                    return { action: 'write', data: value };
+                };
+
+                const createHandle = suggestedName => {
+                    const state = { parts: [] };
+
+                    return {
+                        kind: 'file',
+                        name: suggestedName,
+                        queryPermission: async () => 'granted',
+                        requestPermission: async () => 'granted',
+                        isSameEntry: async other => other === this,
+                        getFile: async () => new File(
+                            state.parts,
+                            suggestedName,
+                            { type: 'application/octet-stream' }
+                        ),
+                        createWritable: async () => {
+                            let closed = false;
+
+                            return {
+                                locked: false,
+                                write: async value => {
+                                    if (closed) throw new Error('Writable stream is closed');
+
+                                    const command = normalizeWriteValue(value);
+                                    if (command.action === 'seek') return;
+                                    if (command.action === 'truncate') {
+                                        if (command.size === 0) state.parts = [];
+                                        return;
+                                    }
+
+                                    const data = command.data;
+                                    if (data === undefined || data === null) return;
+                                    state.parts.push(data);
+                                },
+                                seek: async () => {},
+                                truncate: async size => {
+                                    if (Number(size) === 0) state.parts = [];
+                                },
+                                abort: async () => {
+                                    closed = true;
+                                    state.parts = [];
+                                },
+                                close: async () => {
+                                    if (closed) return;
+                                    closed = true;
+
+                                    const blob = new Blob(state.parts, {
+                                        type: 'application/octet-stream'
+                                    });
+
+                                    await new Promise((resolve, reject) => {
+                                        const reader = new FileReader();
+                                        reader.onloadend = () => {
+                                            try {
+                                                const dataUrl = String(reader.result || '');
+                                                if (!dataUrl) {
+                                                    reject(new Error('Empty project data'));
+                                                    return;
+                                                }
+                                                bridge.saveProjectDataUrl(
+                                                    dataUrl,
+                                                    suggestedName,
+                                                    blob.type || 'application/octet-stream'
+                                                );
+                                                resolve();
+                                            } catch (error) {
+                                                reject(error);
+                                            }
+                                        };
+                                        reader.onerror = () => reject(reader.error || new Error('Read failed'));
+                                        reader.readAsDataURL(blob);
+                                    });
+                                }
+                            };
+                        }
+                    };
+                };
+
+                try {
+                    Object.defineProperty(window, 'showSaveFilePicker', {
+                        configurable: true,
+                        writable: true,
+                        value: async options => createHandle(safeSuggestedName(options || {}))
+                    });
+                } catch (_) {
+                    try {
+                        window.showSaveFilePicker = async options =>
+                            createHandle(safeSuggestedName(options || {}));
+                    } catch (_) {}
+                }
+            })();
+        """.trimIndent()
+
         private val MAIN_PAGE_FIXED_SCROLL_SCRIPT = """
             (() => {
                 if (window.__bdengineFixedBodyScrollInstalled) return;
@@ -245,9 +372,11 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
 
             // Current document.
             controller.installPageBridge()
+            installFileSystemSaveShim(webView)
             installMainPageFixedScroll(webView)
             webView.postDelayed({
                 controller.installPageBridge()
+                installFileSystemSaveShim(webView)
                 installMainPageFixedScroll(webView)
             }, 500L)
 
@@ -261,11 +390,21 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
 
                 WebViewCompat.addDocumentStartJavaScript(
                     webView,
+                    FILE_SYSTEM_SAVE_SHIM_SCRIPT,
+                    TRUSTED_ORIGINS
+                )
+
+                WebViewCompat.addDocumentStartJavaScript(
+                    webView,
                     MAIN_PAGE_FIXED_SCROLL_SCRIPT,
                     BLOCK_DISPLAY_ORIGINS
                 )
             }
         }
+    }
+
+    private fun installFileSystemSaveShim(webView: WebView) {
+        webView.evaluateJavascript(FILE_SYSTEM_SAVE_SHIM_SCRIPT, null)
     }
 
     private fun installMainPageFixedScroll(webView: WebView) {
