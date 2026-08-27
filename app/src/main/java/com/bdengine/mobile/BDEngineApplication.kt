@@ -19,11 +19,11 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
     companion object {
         private val DOWNLOAD_BRIDGE_SCRIPT = """
             (() => {
-                if (window.__bdengineNativeDownloadInstalled) return;
-                window.__bdengineNativeDownloadInstalled = true;
-
                 const bridge = window.BDEngineDownloads;
                 if (!bridge) return;
+
+                if (window.__bdengineNativeDownloadInstalled) return;
+                window.__bdengineNativeDownloadInstalled = true;
 
                 const normalizeLabel = value => String(value || '')
                     .replace(/\s+/g, ' ')
@@ -52,6 +52,11 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
                     return russian || english;
                 };
 
+                const isProjectFileName = name => {
+                    const normalized = String(name || '').toLowerCase();
+                    return normalized.endsWith('.bdengine') || normalized.endsWith('.bdstudio');
+                };
+
                 document.addEventListener('click', event => {
                     if (isSaveToDevice(clickedLabel(event.target))) {
                         window.__bdengineNativeProjectSaveUntil = Date.now() + 5000;
@@ -72,7 +77,7 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
                     }
 
                     const fileName = suggestedName || 'BDEngine-export';
-                    const projectSave = consumeProjectSave();
+                    const projectSave = consumeProjectSave() || isProjectFileName(fileName);
 
                     try {
                         if (href.startsWith('data:')) {
