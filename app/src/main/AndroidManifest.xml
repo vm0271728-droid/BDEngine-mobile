@@ -20,6 +20,12 @@
         android:theme="@style/Theme.BDEngineMobile"
         android:usesCleartextTraffic="false">
 
+        <provider
+            android:name=".AgreementInitializerProvider"
+            android:authorities="${applicationId}.agreement-init"
+            android:exported="false"
+            android:initOrder="100" />
+
         <activity
             android:name=".DeviceFilePickerActivity"
             android:excludeFromRecents="true"
