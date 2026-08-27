@@ -263,60 +263,10 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
             })();
         """.trimIndent()
 
-        private val MAIN_PAGE_FIXED_SCROLL_SCRIPT = """
-            (() => {
-                if (window.__bdengineFixedBodyScrollInstalled) return;
-                window.__bdengineFixedBodyScrollInstalled = true;
-
-                const install = () => {
-                    try {
-                        const html = document.documentElement;
-                        const body = document.body;
-                        if (!html || !body) return;
-
-                        // Keep the browser/root viewport physically pinned. The body is
-                        // the only vertical scrolling surface, so the whole page cannot
-                        // drift upward while the user can still scroll through content.
-                        html.style.setProperty('height', '100%', 'important');
-                        html.style.setProperty('overflow', 'hidden', 'important');
-                        html.style.setProperty('overscroll-behavior', 'none', 'important');
-
-                        body.style.setProperty('height', '100%', 'important');
-                        body.style.setProperty('max-height', '100%', 'important');
-                        body.style.setProperty('overflow-x', 'hidden', 'important');
-                        body.style.setProperty('overflow-y', 'auto', 'important');
-                        body.style.setProperty('overscroll-behavior-x', 'none', 'important');
-                        body.style.setProperty('overscroll-behavior-y', 'contain', 'important');
-                        body.style.setProperty('-webkit-overflow-scrolling', 'touch', 'important');
-
-                        if (window.scrollX !== 0 || window.scrollY !== 0) {
-                            window.scrollTo(0, 0);
-                        }
-                    } catch (_) {}
-                };
-
-                install();
-                if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', install, { once: true });
-                }
-
-                // This listener only pins the outer window. It never changes body.scrollTop.
-                window.addEventListener('scroll', () => {
-                    if (window.scrollX !== 0 || window.scrollY !== 0) {
-                        window.scrollTo(0, 0);
-                    }
-                }, { passive: true });
-            })();
-        """.trimIndent()
-
         private val TRUSTED_ORIGINS = setOf(
             "https://block-display.com",
             "https://bdengine.app",
             "https://beta.bdengine.app"
-        )
-
-        private val BLOCK_DISPLAY_ORIGINS = setOf(
-            "https://block-display.com"
         )
     }
 
@@ -354,33 +304,24 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
 
             val rootLayout = findRootFrameLayout(webView) ?: return@post
 
-            // Chromium decides the exact CPU thread allocation itself. These are the
-            // strongest public Android controls available to keep its renderer fast.
             webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
             }
 
-            // BDEngine's "Открыть с устройства" is a standard web file chooser.
-            // Route it through Android's Storage Access Framework instead of leaving
-            // the WebView with the default no-op WebChromeClient.
             webView.webChromeClient = BDEngineWebChromeClient(activity)
 
             val controller = DownloadController(activity, rootLayout, webView)
             controller.attach()
             downloadControllers[activity] = controller
 
-            // Current document.
             controller.installPageBridge()
             installFileSystemSaveShim(webView)
-            installMainPageFixedScroll(webView)
             webView.postDelayed({
                 controller.installPageBridge()
                 installFileSystemSaveShim(webView)
-                installMainPageFixedScroll(webView)
             }, 500L)
 
-            // Every later BDEngine navigation, including the editor domain.
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 WebViewCompat.addDocumentStartJavaScript(
                     webView,
@@ -393,33 +334,12 @@ class BDEngineApplication : Application(), Application.ActivityLifecycleCallback
                     FILE_SYSTEM_SAVE_SHIM_SCRIPT,
                     TRUSTED_ORIGINS
                 )
-
-                WebViewCompat.addDocumentStartJavaScript(
-                    webView,
-                    MAIN_PAGE_FIXED_SCROLL_SCRIPT,
-                    BLOCK_DISPLAY_ORIGINS
-                )
             }
         }
     }
 
     private fun installFileSystemSaveShim(webView: WebView) {
         webView.evaluateJavascript(FILE_SYSTEM_SAVE_SHIM_SCRIPT, null)
-    }
-
-    private fun installMainPageFixedScroll(webView: WebView) {
-        if (!isBlockDisplayUrl(webView.url)) return
-        webView.evaluateJavascript(MAIN_PAGE_FIXED_SCROLL_SCRIPT, null)
-    }
-
-    private fun isBlockDisplayUrl(url: String?): Boolean {
-        if (url.isNullOrBlank()) return false
-        return try {
-            val host = android.net.Uri.parse(url).host.orEmpty().lowercase()
-            host == "block-display.com" || host == "www.block-display.com"
-        } catch (_: Throwable) {
-            false
-        }
     }
 
     private fun findWebView(view: View): WebView? {
